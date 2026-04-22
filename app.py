@@ -12,13 +12,13 @@ except ImportError:
     qrcode = None
 
 app = Flask(__name__)
-app.secret_key = "supersecretkey_for_demo_only"
+app.secret_key = os.environ.get("SECRET_KEY", "supersecretkey_for_demo_only")
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 DATABASE_PATH = os.path.join(BASE_DIR, "database.db")
 
-ADMIN_EMAIL = "admin@ckfood.com"
-ADMIN_PASSWORD = "admin123"
+ADMIN_EMAIL = os.environ.get("ADMIN_EMAIL", "admin@ckfood.com")
+ADMIN_PASSWORD = os.environ.get("ADMIN_PASSWORD", "admin123")
 
 FOOD_CATALOG = [
     ("Veg Deluxe Pizza", "Veg", 299, "images/veg_deluxe_pizza.jpeg", "Fresh vegetables, mozzarella, and homemade sauce."),
