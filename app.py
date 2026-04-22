@@ -1,4 +1,5 @@
 ﻿import os
+import shutil
 import sqlite3
 import base64
 from io import BytesIO
@@ -108,9 +109,62 @@ def init_db():
         )
         '''
     )
+    db.execute(
+        '''
+        CREATE TABLE IF NOT EXISTS ratings(
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER NOT NULL,
+            food_id INTEGER NOT NULL,
+            order_id INTEGER NOT NULL,
+            rating INTEGER NOT NULL CHECK (rating >= 1 AND rating <= 5),
+            review TEXT,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE(user_id, food_id, order_id),
+            FOREIGN KEY(user_id) REFERENCES users(id),
+            FOREIGN KEY(food_id) REFERENCES foods(id),
+            FOREIGN KEY(order_id) REFERENCES orders(id)
+        )
+        '''
+    )
     db.commit()
+    normalize_db_image_paths(db)
     seed_foods(db)
     fix_food_images(db)
+    ensure_image_aliases()
+
+
+def normalize_db_image_paths(db):
+    foods = db.execute("SELECT id, image FROM foods").fetchall()
+    for food in foods:
+        image = food["image"]
+        if not image or image.startswith("http"):
+            continue
+        normalized = image.replace("\\", "/").strip()
+        if not normalized.startswith("images/"):
+            normalized = f"images/{normalized.split('/')[-1]}"
+        normalized = normalized.lower()
+        if normalized != image:
+            db.execute("UPDATE foods SET image = ? WHERE id = ?", (normalized, food["id"]))
+    db.commit()
+
+
+def ensure_image_aliases():
+    image_dir = os.path.join(BASE_DIR, "static", "images")
+    alias_pairs = [
+        ("margherita_pizza.png", "margherita_pizza.jpeg"),
+        ("bbq_chicken_pizza.png", "bbq_chicken_pizza.jpeg"),
+        ("caesar_salad.png", "caesar_salad.jpeg"),
+        ("chocolate_cake.png", "chocolate_cake.jpeg"),
+        ("spaghetti_bolognese.png", "spaghetti_bolognese.jpeg"),
+        ("fish_curry.png", "fish_curry.jpeg"),
+        ("vanilla_ice_cream.png", "vanilla_ice_cream.jpeg"),
+    ]
+    for source_name, alias_name in alias_pairs:
+        source_path = os.path.join(image_dir, source_name)
+        alias_path = os.path.join(image_dir, alias_name)
+        if os.path.exists(source_path) and not os.path.exists(alias_path):
+            shutil.copyfile(source_path, alias_path)
 
 
 def seed_foods(db):
@@ -189,11 +243,34 @@ def home():
     search = request.args.get("q", "")
     if search:
         foods = query_db(
-            "SELECT * FROM foods WHERE name LIKE ? OR description LIKE ? LIMIT 8",
+            '''
+            SELECT
+                f.*,
+                COALESCE(AVG(r.rating), 0) AS avg_rating,
+                COUNT(r.id) AS rating_count
+            FROM foods f
+            LEFT JOIN ratings r ON r.food_id = f.id
+            WHERE f.name LIKE ? OR f.description LIKE ?
+            GROUP BY f.id
+            ORDER BY f.id DESC
+            LIMIT 8
+            ''',
             (f"%{search}%", f"%{search}%"),
         )
     else:
-        foods = query_db("SELECT * FROM foods LIMIT 8")
+        foods = query_db(
+            '''
+            SELECT
+                f.*,
+                COALESCE(AVG(r.rating), 0) AS avg_rating,
+                COUNT(r.id) AS rating_count
+            FROM foods f
+            LEFT JOIN ratings r ON r.food_id = f.id
+            GROUP BY f.id
+            ORDER BY f.id DESC
+            LIMIT 8
+            '''
+        )
     return render_template("home.html", foods=foods, search=search)
 
 
@@ -256,18 +333,25 @@ def logout():
 def menu():
     category = request.args.get("category")
     search = request.args.get("q", "")
-    query = "SELECT * FROM foods"
+    query = """
+    SELECT
+        f.*,
+        COALESCE(AVG(r.rating), 0) AS avg_rating,
+        COUNT(r.id) AS rating_count
+    FROM foods f
+    LEFT JOIN ratings r ON r.food_id = f.id
+    """
     args = []
     filters = []
     if category:
-        filters.append("category = ?")
+        filters.append("f.category = ?")
         args.append(category)
     if search:
-        filters.append("(name LIKE ? OR description LIKE ?)")
+        filters.append("(f.name LIKE ? OR f.description LIKE ?)")
         args.extend([f"%{search}%", f"%{search}%"])
     if filters:
         query += " WHERE " + " AND ".join(filters)
-    query += " ORDER BY id DESC"
+    query += " GROUP BY f.id ORDER BY f.id DESC"
     foods = query_db(query, tuple(args))
     return render_template("menu.html", foods=foods, category=category, search=search)
 
@@ -431,15 +515,76 @@ def track_order(order_id):
 
     order_items = query_db(
         '''
-        SELECT oi.qty, f.name, f.category, f.price
+        SELECT
+            oi.food_id,
+            oi.qty,
+            f.name,
+            f.category,
+            f.price,
+            r.rating AS user_rating,
+            r.review AS user_review
         FROM order_items oi
         JOIN foods f ON oi.food_id = f.id
+        LEFT JOIN ratings r ON r.order_id = oi.order_id AND r.food_id = oi.food_id AND r.user_id = ?
         WHERE oi.order_id = ?
         ''',
-        (order_id,)
+        (session["user_id"], order_id)
     )
 
     return render_template("track_order.html", order=order, order_items=order_items)
+
+
+@app.route("/rate_item/<int:order_id>/<int:food_id>", methods=["POST"])
+@login_required
+def rate_item(order_id, food_id):
+    rating_raw = request.form.get("rating")
+    review = (request.form.get("review") or "").strip()
+
+    try:
+        rating = int(rating_raw)
+    except (TypeError, ValueError):
+        flash("Please select a valid rating from 1 to 5.", "danger")
+        return redirect(url_for("track_order", order_id=order_id))
+
+    if rating < 1 or rating > 5:
+        flash("Rating must be between 1 and 5.", "danger")
+        return redirect(url_for("track_order", order_id=order_id))
+
+    eligible_item = query_db(
+        '''
+        SELECT oi.id
+        FROM order_items oi
+        JOIN orders o ON o.id = oi.order_id
+        WHERE oi.order_id = ?
+          AND oi.food_id = ?
+          AND o.user_id = ?
+          AND o.status = 'Delivered'
+        ''',
+        (order_id, food_id, session["user_id"]),
+        one=True,
+    )
+
+    if not eligible_item:
+        flash("You can rate only delivered items from your own orders.", "warning")
+        return redirect(url_for("track_order", order_id=order_id))
+
+    db = get_db()
+    db.execute(
+        '''
+        INSERT INTO ratings (user_id, food_id, order_id, rating, review, updated_at)
+        VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+        ON CONFLICT(user_id, food_id, order_id)
+        DO UPDATE SET
+            rating = excluded.rating,
+            review = excluded.review,
+            updated_at = CURRENT_TIMESTAMP
+        ''',
+        (session["user_id"], food_id, order_id, rating, review),
+    )
+    db.commit()
+
+    flash("Thanks! Your rating has been saved.", "success")
+    return redirect(url_for("track_order", order_id=order_id))
 
 
 @app.route("/admin_login", methods=["GET", "POST"])
@@ -469,8 +614,8 @@ def admin_logout():
 @app.route("/admin")
 @admin_required
 def admin_dashboard():
-    orders = query_db("SELECT * FROM orders ORDER BY created_at DESC")
-    return render_template("admin_dashboard.html", orders=orders)
+    foods = query_db("SELECT * FROM foods ORDER BY id DESC")
+    return render_template("admin_dashboard.html", foods=foods)
 
 
 @app.route("/admin/orders")
