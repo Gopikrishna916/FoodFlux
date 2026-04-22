@@ -1,0 +1,210 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="container mt-5">
+    <div class="row justify-content-center">
+        <div class="col-lg-8">
+            <!-- Order Tracking Header -->
+            <div class="card shadow-sm mb-4 fade-in">
+                <div class="card-body">
+                    <h2 class="card-title mb-3">📦 Order Tracking</h2>
+                    <div class="row">
+                        <div class="col-md-6">
+                            <p><strong>Order ID:</strong> #{{ order.id }}</p>
+                            <p><strong>Payment Method:</strong> {{ order.payment }}</p>
+                            <p><strong>Total Amount:</strong> ₹{{ "%.2f" | format(order.total) }}</p>
+                        </div>
+                        <div class="col-md-6">
+                            <p><strong>Delivery Address:</strong></p>
+                            <p><small>{{ order.address }}</small></p>
+                            <p><strong>Contact:</strong> {{ order.phone }}</p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Order Status Progress -->
+            <div class="card shadow-sm mb-4 fade-in">
+                <div class="card-body">
+                    <h5 class="card-title mb-4">Order Status</h5>
+                    <div class="d-flex justify-content-between align-items-center">
+                        <div class="text-center">
+                            <div class="status-circle active slide-in">✓</div>
+                            <small>Order Placed</small>
+                        </div>
+                        <div class="flex-grow-1 mx-2" style="border-top: 2px solid #28a745; margin-top: 30px;"></div>
+                        <div class="text-center">
+                            <div class="status-circle {% if order.status in ['Preparing', 'Ready', 'Out for Delivery', 'Delivered'] %}active{% endif %} slide-in" style="animation-delay: 0.2s;">
+                                {% if order.status in ['Preparing', 'Ready', 'Out for Delivery', 'Delivered'] %}✓{% endif %}
+                            </div>
+                            <small>Preparing</small>
+                        </div>
+                        <div class="flex-grow-1 mx-2" style="border-top: 2px solid {% if order.status in ['Ready', 'Out for Delivery', 'Delivered'] %}#28a745{% else %}#ccc{% endif %}; margin-top: 30px;"></div>
+                        <div class="text-center">
+                            <div class="status-circle {% if order.status in ['Ready', 'Out for Delivery', 'Delivered'] %}active{% endif %} slide-in" style="animation-delay: 0.4s;">
+                                {% if order.status in ['Ready', 'Out for Delivery', 'Delivered'] %}✓{% endif %}
+                            </div>
+                            <small>Ready</small>
+                        </div>
+                        <div class="flex-grow-1 mx-2" style="border-top: 2px solid {% if order.status in ['Out for Delivery', 'Delivered'] %}#28a745{% else %}#ccc{% endif %}; margin-top: 30px;"></div>
+                        <div class="text-center">
+                            <div class="status-circle {% if order.status in ['Out for Delivery', 'Delivered'] %}active{% endif %} slide-in" style="animation-delay: 0.6s;">
+                                {% if order.status in ['Out for Delivery', 'Delivered'] %}✓{% endif %}
+                            </div>
+                            <small>Delivery</small>
+                        </div>
+                    </div>
+                    <div class="mt-4 text-center">
+                        <p class="mb-1"><strong>Current Status:</strong> <span class="badge bg-primary" id="statusBadge" style="font-size: 1rem; padding: 0.5rem 1rem;">{{ order.status }}</span></p>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Delivery Timer -->
+            <div class="card shadow-sm mb-4 border-success fade-in" style="animation-delay: 0.3s;">
+                <div class="card-body text-center bg-light">
+                    <h5 class="card-title mb-3">⏱️ Estimated Delivery Time</h5>
+                    <div class="timer-display" id="timerDisplay">
+                        <span id="minutes">30</span>:<span id="seconds">00</span>
+                    </div>
+                    <p class="mt-3 mb-0" id="estimatedTime"></p>
+                </div>
+            </div>
+
+            <!-- Order Items -->
+            <div class="card shadow-sm mb-4 fade-in" style="animation-delay: 0.6s;">
+                <div class="card-body">
+                    <h5 class="card-title mb-3">📋 Order Items</h5>
+                    <ul class="list-group list-group-flush">
+                        {% for item in order_items %}
+                        <li class="list-group-item d-flex justify-content-between align-items-center slide-up">
+                            <div>
+                                <strong>{{ item.name }}</strong><br>
+                                <small>Qty: {{ item.qty }} × ₹{{ "%.2f" | format(item.price) }}</small>
+                            </div>
+                            <span class="fw-bold">₹{{ "%.2f" | format(item.price * item.qty) }}</span>
+                        </li>
+                        {% endfor %}
+                    </ul>
+                    <hr>
+                    <div class="d-flex justify-content-between fw-bold">
+                        <span>Total</span>
+                        <span class="text-primary" style="font-size: 1.1rem;">₹{{ "%.2f" | format(order.total) }}</span>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Action Buttons -->
+            <div class="d-flex gap-2 mb-4">
+                <a href="{{ url_for('home') }}" class="btn btn-secondary flex-grow-1" style="transition: all 0.3s;">Continue Shopping</a>
+                <a href="{{ url_for('menu') }}" class="btn btn-outline-primary flex-grow-1" style="transition: all 0.3s;">View Menu</a>
+            </div>
+        </div>
+    </div>
+</div>
+
+<style>
+    .status-circle {
+        width: 50px;
+        height: 50px;
+        border-radius: 50%;
+        background-color: #f0f0f0;
+        border: 2px solid #ccc;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        margin: 0 auto 10px;
+        font-weight: bold;
+        color: #ccc;
+        font-size: 1.5rem;
+    }
+    
+    .status-circle.active {
+        background-color: #28a745;
+        border-color: #28a745;
+        color: white;
+    }
+    
+    .timer-display {
+        font-size: 3.5rem;
+        font-weight: bold;
+        color: #28a745;
+        letter-spacing: 2px;
+        font-family: 'Courier New', monospace;
+        animation: pulse 1.5s infinite;
+    }
+</style>
+
+<script>
+    function parseDateTime(dateString) {
+        // Handle ISO format datetime strings
+        return new Date(dateString);
+    }
+    
+    const estimatedDeliveryTime = parseDateTime('{{ order.estimated_delivery_time }}');
+    
+    let timerInterval;
+    
+    function updateTimer() {
+        const now = new Date();
+        const diff = estimatedDeliveryTime - now;
+        
+        if (diff <= 0) {
+            document.getElementById('timerDisplay').innerHTML = '<span id="minutes">00</span>:<span id="seconds">00</span>';
+            document.getElementById('estimatedTime').textContent = 'Your order should be arriving soon!';
+            document.getElementById('statusBadge').textContent = '{{ order.status }}';
+            if ('{{ order.status }}' === 'Delivered') {
+                showDeliveryNotification();
+            }
+            if (timerInterval) {
+                clearInterval(timerInterval);
+            }
+            return;
+        }
+        
+        const minutes = Math.floor(diff / 60000);
+        const seconds = Math.floor((diff % 60000) / 1000);
+        
+        document.getElementById('minutes').textContent = String(minutes).padStart(2, '0');
+        document.getElementById('seconds').textContent = String(seconds).padStart(2, '0');
+        
+        const deliveryTime = estimatedDeliveryTime.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: true });
+        document.getElementById('estimatedTime').textContent = 'Expected delivery by ' + deliveryTime;
+    }
+    
+    function showDeliveryNotification() {
+        // Check if status is delivered and show notification
+        if ('{{ order.status }}' === 'Delivered') {
+            const notificationHTML = `
+                <div class="alert alert-success alert-dismissible fade show bounce-in" role="alert" style="position: fixed; top: 20px; right: 20px; width: 400px; z-index: 10000; box-shadow: 0 4px 6px rgba(0,0,0,0.2);">
+                    <strong>🎉 Order Delivered!</strong>
+                    <p>Your order has been delivered. Enjoy your delicious food! 😋</p>
+                    <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
+                </div>
+            `;
+            document.body.insertAdjacentHTML('beforeend', notificationHTML);
+        }
+    }
+    
+    // Update timer immediately
+    updateTimer();
+    const timerInterval = setInterval(updateTimer, 1000);
+    
+    // Check order status periodically
+    setInterval(function() {
+        fetch('/api/order/check/{{ order.id }}')
+            .then(response => response.json())
+            .then(data => {
+                if (data.status === 'Delivered' && '{{ order.status }}' !== 'Delivered') {
+                    location.reload();
+                }
+            })
+            .catch(err => console.log('Status check:', err));
+    }, 5000); // Check every 5 seconds
+    
+    // Update timer immediately
+    updateTimer();
+    
+    // Update every second
+    timerInterval = setInterval(updateTimer, 1000);
+</script>
+{% endblock %}

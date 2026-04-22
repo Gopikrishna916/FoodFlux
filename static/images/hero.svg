@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1400" height="420" viewBox="0 0 1400 420">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#ff7b00"/>
+      <stop offset="100%" stop-color="#ffb347"/>
+    </linearGradient>
+  </defs>
+  <rect width="1400" height="420" fill="url(#bg)" />
+  <circle cx="1100" cy="130" r="140" fill="#fff" opacity="0.2"/>
+  <circle cx="300" cy="300" r="180" fill="#fff" opacity="0.15"/>
+  <text x="700" y="160" font-size="64" font-family="Arial, sans-serif" fill="#fff" text-anchor="middle">Delicious Meals Delivered</text>
+  <text x="700" y="230" font-size="28" font-family="Arial, sans-serif" fill="#fff" text-anchor="middle">Order fresh food, enjoy fast delivery, and taste every bite.</text>
+</svg>

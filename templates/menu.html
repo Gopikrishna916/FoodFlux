@@ -1,0 +1,61 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-4 flex-wrap gap-2">
+    <div>
+        <h2>🍽️ Food Menu</h2>
+        <p class="text-muted">Browse by category and add delicious meals to your cart.</p>
+    </div>
+    <form action="{{ url_for('menu') }}" method="get" class="d-flex gap-2 flex-wrap">
+        <input type="text" name="q" class="form-control" placeholder="Search menu items" value="{{ search }}" />
+        <button class="btn btn-primary" style="transition: all 0.3s;">Search</button>
+    </form>
+</div>
+<div class="mb-4">
+    <a href="{{ url_for('menu') }}" class="btn btn-outline-secondary btn-sm{% if not category %} active{% endif %}" style="transition: all 0.2s;">All</a>
+    <a href="{{ url_for('menu', category='Veg') }}" class="btn btn-outline-secondary btn-sm{% if category=='Veg' %} active{% endif %}" style="transition: all 0.2s;">Veg</a>
+    <a href="{{ url_for('menu', category='Non-Veg') }}" class="btn btn-outline-secondary btn-sm{% if category=='Non-Veg' %} active{% endif %}" style="transition: all 0.2s;">Non-Veg</a>
+    <a href="{{ url_for('menu', category='Fast Food') }}" class="btn btn-outline-secondary btn-sm{% if category=='Fast Food' %} active{% endif %}" style="transition: all 0.2s;">Fast Food</a>
+    <a href="{{ url_for('menu', category='Drinks') }}" class="btn btn-outline-secondary btn-sm{% if category=='Drinks' %} active{% endif %}" style="transition: all 0.2s;">Drinks</a>
+</div>
+<div class="row g-4">
+    {% if foods %}
+        {% for food in foods %}
+        <div class="col-lg-3 col-md-4 col-sm-6 fade-in">
+            <div class="card h-100 shadow-sm food-card" style="transition: all 0.3s; cursor: pointer;">
+                <div class="food-image-container" style="height: 250px; overflow: hidden; background-color: #f5f5f5;">
+                    {% if food.image.startswith('http') %}
+                    <img src="{{ food.image }}" class="card-img-top food-image" alt="{{ food.name }}" style="height: 100%; width: 100%; object-fit: cover; transition: transform 0.3s;" />
+                    {% else %}
+                    <img src="{{ url_for('static', filename=food.image) }}" class="card-img-top food-image" alt="{{ food.name }}" style="height: 100%; width: 100%; object-fit: cover; transition: transform 0.3s;" />
+                    {% endif %}
+                </div>
+                <div class="card-body">
+                    <span class="badge bg-secondary mb-2">{{ food.category }}</span>
+                    <h5 class="card-title">{{ food.name }}</h5>
+                    <p class="card-text small text-muted">{{ food.description }}</p>
+                </div>
+                <div class="card-footer bg-white border-top-0 d-flex justify-content-between align-items-center">
+                    <span class="fw-bold text-primary" style="font-size: 1.2rem;">₹{{ "%.2f" | format(food.price) }}</span>
+                    <a href="{{ url_for('add_to_cart', food_id=food.id) }}" class="btn btn-primary btn-sm" style="transition: all 0.2s;">Add to Cart</a>
+                </div>
+            </div>
+        </div>
+        {% endfor %}
+    {% else %}
+        <div class="col-12">
+            <div class="alert alert-info">No menu items found for this selection.</div>
+        </div>
+    {% endif %}
+</div>
+
+<style>
+    .food-card:hover {
+        transform: translateY(-5px);
+        box-shadow: 0 8px 16px rgba(0,0,0,0.15) !important;
+    }
+    
+    .food-card:hover .food-image {
+        transform: scale(1.05);
+    }
+</style>
+{% endblock %}

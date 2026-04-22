@@ -1,0 +1,40 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="row justify-content-center">
+    <div class="col-lg-7">
+        <div class="card shadow-sm">
+            <div class="card-body">
+                <h2 class="card-title mb-4">{% if food %}Edit Food Item{% else %}Add New Food Item{% endif %}</h2>
+                <form method="post">
+                    <div class="mb-3">
+                        <label class="form-label">Name</label>
+                        <input type="text" name="name" class="form-control" value="{{ food.name if food else '' }}" required />
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label">Category</label>
+                        <select name="category" class="form-select" required>
+                            <option value="">Choose category</option>
+                            {% for cat in ['Veg', 'Non-Veg', 'Fast Food', 'Drinks'] %}
+                                <option value="{{ cat }}" {% if food and food.category == cat %}selected{% endif %}>{{ cat }}</option>
+                            {% endfor %}
+                        </select>
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label">Price</label>
+                        <input type="number" step="0.01" name="price" class="form-control" value="{{ food.price if food else '' }}" required />
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label">Image URL or path</label>
+                        <input type="text" name="image" class="form-control" value="{{ food.image if food else '' }}" placeholder="images/pizza.svg or https://example.com/image.jpg" required />
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label">Description</label>
+                        <textarea name="description" class="form-control" rows="4" required>{{ food.description if food else '' }}</textarea>
+                    </div>
+                    <button class="btn btn-primary">{% if food %}Update Item{% else %}Add Item{% endif %}</button>
+                </form>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
