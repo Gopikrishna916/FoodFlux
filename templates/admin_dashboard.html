@@ -15,6 +15,7 @@
         <thead class="table-light">
             <tr>
                 <th>ID</th>
+                <th>Image</th>
                 <th>Name</th>
                 <th>Category</th>
                 <th>Price</th>
@@ -26,12 +27,22 @@
             {% for food in foods %}
             <tr>
                 <td>{{ food.id }}</td>
+                <td>
+                    {% if food.image.startswith('http') %}
+                    <img src="{{ food.image }}" alt="{{ food.name }}" class="admin-thumb" onerror="this.onerror=null;this.src='{{ url_for('static', filename='images/hero.svg') }}';" />
+                    {% else %}
+                    <img src="{{ url_for('static', filename=food.image) }}" alt="{{ food.name }}" class="admin-thumb" onerror="this.onerror=null;this.src='{{ url_for('static', filename='images/hero.svg') }}';" />
+                    {% endif %}
+                </td>
                 <td>{{ food.name }}</td>
                 <td>{{ food.category }}</td>
                 <td>₹{{ "%.2f" | format(food.price) }}</td>
                 <td>{{ food.description[:50] }}{% if food.description|length > 50 %}...{% endif %}</td>
                 <td>
                     <a href="{{ url_for('admin_foods') }}" class="btn btn-sm btn-outline-primary">Manage</a>
+                    <form class="d-inline" method="post" action="{{ url_for('delete_food', food_id=food.id) }}" onsubmit="return confirm('Delete this item?');">
+                        <button type="submit" class="btn btn-sm btn-outline-danger">Delete</button>
+                    </form>
                 </td>
             </tr>
             {% endfor %}

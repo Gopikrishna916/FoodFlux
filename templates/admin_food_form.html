@@ -1,38 +1,79 @@
 {% extends "base.html" %}
 {% block content %}
-<div class="row justify-content-center">
-    <div class="col-lg-7">
-        <div class="card shadow-sm">
+<div class="row g-4">
+    <div class="col-lg-6">
+        <div class="card shadow-sm h-100">
             <div class="card-body">
-                <h2 class="card-title mb-4">{% if food %}Edit Food Item{% else %}Add New Food Item{% endif %}</h2>
-                <form method="post">
+                <h2 class="card-title mb-4">Add New Food Item</h2>
+                <form method="post" enctype="multipart/form-data">
                     <div class="mb-3">
                         <label class="form-label">Name</label>
-                        <input type="text" name="name" class="form-control" value="{{ food.name if food else '' }}" required />
+                        <input type="text" name="name" class="form-control" required />
                     </div>
                     <div class="mb-3">
                         <label class="form-label">Category</label>
                         <select name="category" class="form-select" required>
                             <option value="">Choose category</option>
-                            {% for cat in ['Veg', 'Non-Veg', 'Fast Food', 'Drinks'] %}
-                                <option value="{{ cat }}" {% if food and food.category == cat %}selected{% endif %}>{{ cat }}</option>
+                            {% for cat in ['Veg', 'Non-Veg', 'Fast Food', 'Drinks', 'Desserts'] %}
+                                <option value="{{ cat }}">{{ cat }}</option>
                             {% endfor %}
                         </select>
                     </div>
                     <div class="mb-3">
                         <label class="form-label">Price</label>
-                        <input type="number" step="0.01" name="price" class="form-control" value="{{ food.price if food else '' }}" required />
+                        <input type="number" step="0.01" name="price" class="form-control" required />
                     </div>
                     <div class="mb-3">
-                        <label class="form-label">Image URL or path</label>
-                        <input type="text" name="image" class="form-control" value="{{ food.image if food else '' }}" placeholder="images/pizza.svg or https://example.com/image.jpg" required />
+                        <label class="form-label">Upload Photo</label>
+                        <input type="file" name="image_file" class="form-control" accept="image/*" required />
+                        <div class="form-text">Allowed: png, jpg, jpeg, gif, webp</div>
                     </div>
                     <div class="mb-3">
                         <label class="form-label">Description</label>
-                        <textarea name="description" class="form-control" rows="4" required>{{ food.description if food else '' }}</textarea>
+                        <textarea name="description" class="form-control" rows="4" required></textarea>
                     </div>
-                    <button class="btn btn-primary">{% if food %}Update Item{% else %}Add Item{% endif %}</button>
+                    <button class="btn btn-primary">Add Item</button>
                 </form>
+            </div>
+        </div>
+    </div>
+
+    <div class="col-lg-6">
+        <div class="card shadow-sm h-100">
+            <div class="card-body">
+                <h3 class="h5 mb-3">Current Items</h3>
+                <div class="table-responsive">
+                    <table class="table align-middle mb-0">
+                        <thead class="table-light">
+                            <tr>
+                                <th>Image</th>
+                                <th>Name</th>
+                                <th>Price</th>
+                                <th>Action</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for food in foods %}
+                            <tr>
+                                <td>
+                                    {% if food.image.startswith('http') %}
+                                    <img src="{{ food.image }}" alt="{{ food.name }}" class="admin-thumb" onerror="this.onerror=null;this.src='{{ url_for('static', filename='images/hero.svg') }}';" />
+                                    {% else %}
+                                    <img src="{{ url_for('static', filename=food.image) }}" alt="{{ food.name }}" class="admin-thumb" onerror="this.onerror=null;this.src='{{ url_for('static', filename='images/hero.svg') }}';" />
+                                    {% endif %}
+                                </td>
+                                <td>{{ food.name }}</td>
+                                <td>₹{{ "%.2f" | format(food.price) }}</td>
+                                <td>
+                                    <form method="post" action="{{ url_for('delete_food', food_id=food.id) }}" onsubmit="return confirm('Delete this item?');">
+                                        <button type="submit" class="btn btn-sm btn-outline-danger">Delete</button>
+                                    </form>
+                                </td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
             </div>
         </div>
     </div>

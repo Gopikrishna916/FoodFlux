@@ -6,6 +6,7 @@ from io import BytesIO
 from datetime import datetime, timedelta
 from flask import Flask, render_template, request, redirect, url_for, flash, session, g, jsonify
 from werkzeug.security import generate_password_hash, check_password_hash
+from werkzeug.utils import secure_filename
 try:
     import qrcode
 except ImportError:
@@ -16,6 +17,8 @@ app.secret_key = os.environ.get("SECRET_KEY", "supersecretkey_for_demo_only")
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 DATABASE_PATH = os.path.join(BASE_DIR, "database.db")
+UPLOAD_DIR = os.path.join(BASE_DIR, "static", "images")
+ALLOWED_IMAGE_EXTENSIONS = {"png", "jpg", "jpeg", "gif", "webp"}
 
 ADMIN_EMAIL = os.environ.get("ADMIN_EMAIL", "admin@ckfood.com")
 ADMIN_PASSWORD = os.environ.get("ADMIN_PASSWORD", "admin123")
@@ -179,6 +182,32 @@ def fix_food_images(db):
     for name, _, _, image, _ in FOOD_CATALOG:
         db.execute("UPDATE foods SET image = ? WHERE name = ?", (image, name))
     db.commit()
+
+
+def is_allowed_image(filename):
+    if not filename or "." not in filename:
+        return False
+    return filename.rsplit(".", 1)[1].lower() in ALLOWED_IMAGE_EXTENSIONS
+
+
+def save_uploaded_food_image(uploaded_file):
+    if not uploaded_file or not uploaded_file.filename:
+        return None, "Please upload an image file."
+
+    if not is_allowed_image(uploaded_file.filename):
+        allowed = ", ".join(sorted(ALLOWED_IMAGE_EXTENSIONS))
+        return None, f"Invalid image type. Allowed types: {allowed}."
+
+    os.makedirs(UPLOAD_DIR, exist_ok=True)
+
+    original_name = secure_filename(uploaded_file.filename)
+    name_part, extension = os.path.splitext(original_name)
+    extension = extension.lower()
+    timestamp = datetime.now().strftime("%Y%m%d%H%M%S%f")
+    safe_name = f"{name_part[:40]}_{timestamp}{extension}"
+    save_path = os.path.join(UPLOAD_DIR, safe_name)
+    uploaded_file.save(save_path)
+    return f"images/{safe_name}", None
 
 
 @app.teardown_appcontext
@@ -632,10 +661,10 @@ def admin_foods():
         name = request.form.get("name")
         category = request.form.get("category")
         price = request.form.get("price")
-        image = request.form.get("image")
+        image_file = request.files.get("image_file")
         description = request.form.get("description")
 
-        if not name or not category or not price or not image or not description:
+        if not name or not category or not price or not description:
             flash("All fields are required.", "danger")
             return redirect(url_for("admin_foods"))
 
@@ -643,6 +672,11 @@ def admin_foods():
             price = float(price)
         except ValueError:
             flash("Invalid price.", "danger")
+            return redirect(url_for("admin_foods"))
+
+        image, upload_error = save_uploaded_food_image(image_file)
+        if upload_error:
+            flash(upload_error, "danger")
             return redirect(url_for("admin_foods"))
 
         db = get_db()
@@ -656,6 +690,37 @@ def admin_foods():
 
     foods = query_db("SELECT * FROM foods ORDER BY id DESC")
     return render_template("admin_food_form.html", foods=foods)
+
+
+@app.route("/admin/foods/delete/<int:food_id>", methods=["POST"])
+@admin_required
+def delete_food(food_id):
+    db = get_db()
+    food = db.execute("SELECT id, image, name FROM foods WHERE id = ?", (food_id,)).fetchone()
+    if not food:
+        flash("Food item not found.", "warning")
+        return redirect(url_for("admin_dashboard"))
+
+    linked_items = db.execute("SELECT COUNT(*) AS count FROM order_items WHERE food_id = ?", (food_id,)).fetchone()
+    if linked_items and linked_items["count"] > 0:
+        flash("This item cannot be deleted because it exists in customer orders.", "warning")
+        return redirect(url_for("admin_dashboard"))
+
+    db.execute("DELETE FROM ratings WHERE food_id = ?", (food_id,))
+    db.execute("DELETE FROM foods WHERE id = ?", (food_id,))
+    db.commit()
+
+    image_path = food["image"] or ""
+    if image_path.startswith("images/"):
+        still_used = db.execute("SELECT 1 FROM foods WHERE image = ? LIMIT 1", (image_path,)).fetchone()
+        protected_images = {item[3] for item in FOOD_CATALOG}
+        if not still_used and image_path not in protected_images:
+            absolute_image_path = os.path.join(BASE_DIR, "static", image_path.replace("/", os.sep))
+            if os.path.exists(absolute_image_path):
+                os.remove(absolute_image_path)
+
+    flash(f"'{food['name']}' deleted successfully.", "success")
+    return redirect(url_for("admin_dashboard"))
 
 
 @app.route("/admin/order/status/<int:order_id>/<status>")
