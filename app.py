@@ -2,6 +2,7 @@
 import shutil
 import sqlite3
 import base64
+import mimetypes
 from io import BytesIO
 from datetime import datetime, timedelta
 from flask import Flask, render_template, request, redirect, url_for, flash, session, g, jsonify
@@ -18,7 +19,6 @@ app.secret_key = os.environ.get("SECRET_KEY", "supersecretkey_for_demo_only")
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 DATABASE_PATH = os.path.join(BASE_DIR, "database.db")
 UPLOAD_DIR = os.path.join(BASE_DIR, "static", "images")
-ALLOWED_IMAGE_EXTENSIONS = {"png", "jpg", "jpeg", "gif", "webp"}
 
 ADMIN_EMAIL = os.environ.get("ADMIN_EMAIL", "admin@ckfood.com")
 ADMIN_PASSWORD = os.environ.get("ADMIN_PASSWORD", "admin123")
@@ -185,24 +185,30 @@ def fix_food_images(db):
 
 
 def is_allowed_image(filename):
-    if not filename or "." not in filename:
+    if not filename:
         return False
-    return filename.rsplit(".", 1)[1].lower() in ALLOWED_IMAGE_EXTENSIONS
+    mime_type, _ = mimetypes.guess_type(filename)
+    return bool(mime_type and mime_type.startswith("image/"))
 
 
 def save_uploaded_food_image(uploaded_file):
     if not uploaded_file or not uploaded_file.filename:
         return None, "Please upload an image file."
 
-    if not is_allowed_image(uploaded_file.filename):
-        allowed = ", ".join(sorted(ALLOWED_IMAGE_EXTENSIONS))
-        return None, f"Invalid image type. Allowed types: {allowed}."
+    mime_type = (uploaded_file.mimetype or "").lower()
+    if not mime_type.startswith("image/") and not is_allowed_image(uploaded_file.filename):
+        return None, "Invalid file type. Please upload an image file."
 
     os.makedirs(UPLOAD_DIR, exist_ok=True)
 
     original_name = secure_filename(uploaded_file.filename)
     name_part, extension = os.path.splitext(original_name)
     extension = extension.lower()
+    if not extension and mime_type.startswith("image/"):
+        guessed_extension = mimetypes.guess_extension(mime_type)
+        extension = (guessed_extension or ".img").lower()
+    if not name_part:
+        name_part = "food_image"
     timestamp = datetime.now().strftime("%Y%m%d%H%M%S%f")
     safe_name = f"{name_part[:40]}_{timestamp}{extension}"
     save_path = os.path.join(UPLOAD_DIR, safe_name)
