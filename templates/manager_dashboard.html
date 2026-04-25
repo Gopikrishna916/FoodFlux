@@ -2,10 +2,10 @@
 {% block content %}
 <div class="d-flex justify-content-between align-items-center mb-4">
     <div>
-        <h2>Admin Dashboard</h2>
-        <p class="text-muted">Manage menu items and update your food catalog.</p>
+        <h2>Hotel Manager Dashboard</h2>
+        <p class="text-muted">Manage menu items, orders, and delivery operations in real time.</p>
     </div>
-    <div>
+    <div class="d-flex flex-wrap gap-2">
         <a href="{{ url_for('admin_foods') }}" class="btn btn-primary">Add New Food</a>
         <a href="{{ url_for('admin_orders') }}" class="btn btn-outline-secondary">View Orders</a>
     </div>

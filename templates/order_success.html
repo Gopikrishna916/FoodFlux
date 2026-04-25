@@ -14,13 +14,14 @@
                     <p class="mb-2" style="color: #28a745;"><strong>💰 Discount Applied:</strong> {{ order.discount_percentage }}% (₹{{ "%.2f" | format(order.discount) }} saved)</p>
                     {% endif %}
                     <p class="mb-2"><strong>Payment Method:</strong> {{ order.payment }}</p>
+                    <p class="mb-2"><strong>Delivery Partner:</strong> {{ order.delivery_person or 'Will be assigned soon' }}</p>
                     <p class="mb-0"><strong>Status:</strong> <span class="badge bg-warning" style="font-size: 0.9rem; padding: 0.5rem 0.8rem;">{{ order.status }}</span></p>
                 </div>
                 
                 <!-- Estimated Delivery Info -->
                 <div class="alert alert-info" role="alert" style="animation: slideInUp 0.5s ease;">
                     <h6 class="alert-heading">⏱️ Estimated Delivery Time</h6>
-                    <p class="mb-0">Your order will be delivered in approximately <strong>30-45 minutes</strong></p>
+                    <p class="mb-0">Your order will be delivered in approximately <strong>30 minutes</strong></p>
                     <small>Expected by: <strong>{{ order.estimated_delivery_time }}</strong></small>
                 </div>
                 

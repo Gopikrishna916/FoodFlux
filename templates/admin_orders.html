@@ -1,8 +1,13 @@
 {% extends "base.html" %}
 {% block content %}
 <div class="mb-4">
-    <h2>Customer Orders</h2>
-    <p class="text-muted">Review recent orders placed by users.</p>
+    <div class="d-flex flex-wrap justify-content-between align-items-center gap-2">
+        <div>
+            <h2>Customer Orders</h2>
+            <p class="text-muted mb-0">Review and manage live order and delivery status.</p>
+        </div>
+        <div class="small text-muted">Auto refresh: every 10 seconds</div>
+    </div>
 </div>
 <div class="table-responsive shadow-sm rounded-3 overflow-hidden">
     <table class="table table-hover mb-0">
@@ -13,8 +18,11 @@
                 <th>Total</th>
                 <th>Payment</th>
                 <th>Status</th>
+                <th>Delivery Partner</th>
+                <th>Delivery Panel</th>
                 <th>Address</th>
                 <th>Phone</th>
+                <th>Actions</th>
             </tr>
         </thead>
         <tbody>
@@ -24,12 +32,36 @@
                 <td>{{ order.customer_name }}<br><small>{{ order.customer_email }}</small></td>
                 <td>₹{{ "%.2f" | format(order.total) }}</td>
                 <td>{{ order.payment }}</td>
-                <td>{{ order.status }}</td>
+                <td>
+                    <span class="badge {% if order.status == 'Delivered' %}bg-success{% elif order.status == 'Out for Delivery' %}bg-primary{% elif order.status == 'Ready' %}bg-info text-dark{% else %}bg-warning text-dark{% endif %}">
+                        {{ order.status }}
+                    </span>
+                </td>
+                <td>{{ order.delivery_person or 'Not Assigned' }}</td>
+                <td>
+                    <span class="badge {% if order.delivery_boy_status == 'Completed' %}bg-success{% elif order.delivery_boy_status == 'On Route' %}bg-primary{% elif order.delivery_boy_status == 'Ready to Dispatch' %}bg-info text-dark{% else %}bg-secondary{% endif %}">
+                        {{ order.delivery_boy_status }}
+                    </span>
+                </td>
                 <td>{{ order.address }}</td>
                 <td>{{ order.phone }}</td>
+                <td>
+                    <div class="d-flex flex-wrap gap-1">
+                        <a href="{{ url_for('update_order_status', order_id=order.id, status='Preparing') }}" class="btn btn-sm btn-outline-warning">Preparing</a>
+                        <a href="{{ url_for('update_order_status', order_id=order.id, status='Ready') }}" class="btn btn-sm btn-outline-info">Ready</a>
+                        <a href="{{ url_for('update_order_status', order_id=order.id, status='Out for Delivery') }}" class="btn btn-sm btn-outline-primary">Out</a>
+                        <a href="{{ url_for('update_order_status', order_id=order.id, status='Delivered') }}" class="btn btn-sm btn-outline-success">Delivered</a>
+                    </div>
+                </td>
             </tr>
             {% endfor %}
         </tbody>
     </table>
 </div>
+
+<script>
+    setTimeout(function () {
+        window.location.reload();
+    }, 10000);
+</script>
 {% endblock %}

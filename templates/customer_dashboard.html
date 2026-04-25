@@ -1,0 +1,88 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-4 flex-wrap gap-2">
+    <div>
+        <h2>Customer Dashboard</h2>
+        <p class="text-muted mb-0">Your orders, status, and quick actions in one place.</p>
+    </div>
+    <a href="{{ url_for('menu') }}" class="btn btn-primary">Order Again</a>
+</div>
+
+<div class="row g-3 mb-4">
+    <div class="col-md-4">
+        <div class="card shadow-sm border-0 bg-light h-100">
+            <div class="card-body">
+                <div class="text-muted small">Total Orders</div>
+                <div class="fs-3 fw-bold">{{ order_summary.total_orders or 0 }}</div>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-4">
+        <div class="card shadow-sm border-0 bg-light h-100">
+            <div class="card-body">
+                <div class="text-muted small">Active Orders</div>
+                <div class="fs-3 fw-bold text-primary">{{ order_summary.active_orders or 0 }}</div>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-4">
+        <div class="card shadow-sm border-0 bg-light h-100">
+            <div class="card-body">
+                <div class="text-muted small">Delivered Orders</div>
+                <div class="fs-3 fw-bold text-success">{{ order_summary.delivered_orders or 0 }}</div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="card shadow-sm mb-4">
+    <div class="card-body">
+        <div class="d-flex justify-content-between align-items-center mb-3">
+            <h3 class="h5 mb-0">Recent Orders</h3>
+            <small class="text-muted">Auto refresh: every 12 seconds</small>
+        </div>
+        <div class="table-responsive">
+            <table class="table align-middle mb-0">
+                <thead class="table-light">
+                    <tr>
+                        <th>Order</th>
+                        <th>Status</th>
+                        <th>Delivery Partner</th>
+                        <th>Total</th>
+                        <th>Placed On</th>
+                        <th>Action</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% if recent_orders %}
+                        {% for order in recent_orders %}
+                        <tr>
+                            <td>#{{ order.id }}</td>
+                            <td>
+                                <span class="badge {% if order.status == 'Delivered' %}bg-success{% elif order.status == 'Out for Delivery' %}bg-primary{% elif order.status == 'Ready' %}bg-info text-dark{% else %}bg-warning text-dark{% endif %}">
+                                    {{ order.status }}
+                                </span>
+                            </td>
+                            <td>{{ order.delivery_person or 'Assigning...' }}</td>
+                            <td>₹{{ "%.2f" | format(order.total) }}</td>
+                            <td>{{ order.created_at }}</td>
+                            <td><a href="{{ url_for('track_order', order_id=order.id) }}" class="btn btn-sm btn-outline-primary">Track</a></td>
+                        </tr>
+                        {% endfor %}
+                    {% else %}
+                        <tr>
+                            <td colspan="6" class="text-center text-muted">No orders yet. Start by browsing the menu.</td>
+                        </tr>
+                    {% endif %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>
+
+<script>
+    setTimeout(function () {
+        window.location.reload();
+    }, 12000);
+</script>
+{% endblock %}

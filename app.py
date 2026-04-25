@@ -23,6 +23,25 @@ UPLOAD_DIR = os.path.join(BASE_DIR, "static", "images")
 ADMIN_EMAIL = os.environ.get("ADMIN_EMAIL", "admin@ckfood.com")
 ADMIN_PASSWORD = os.environ.get("ADMIN_PASSWORD", "admin123")
 
+MANAGER_EMAIL = os.environ.get("MANAGER_EMAIL", ADMIN_EMAIL)
+MANAGER_PASSWORD = os.environ.get("MANAGER_PASSWORD", ADMIN_PASSWORD)
+
+DELIVERY_STAFF = [
+    ("Rahul Sharma", "rahul@ckfood.com", "delivery123"),
+    ("Amit Verma", "amit@ckfood.com", "delivery123"),
+    ("Suresh Kumar", "suresh@ckfood.com", "delivery123"),
+    ("Vikram Singh", "vikram@ckfood.com", "delivery123"),
+    ("Imran Khan", "imran@ckfood.com", "delivery123"),
+]
+
+DELIVERY_TEAM = [
+    "Rahul Sharma",
+    "Amit Verma",
+    "Suresh Kumar",
+    "Vikram Singh",
+    "Imran Khan",
+]
+
 FOOD_CATALOG = [
     ("Veg Deluxe Pizza", "Veg", 299, "images/veg_deluxe_pizza.jpeg", "Fresh vegetables, mozzarella, and homemade sauce."),
     ("Chicken Burger", "Fast Food", 179, "images/chicken_burger.jpeg", "Grilled chicken, lettuce, tomato, and special sauce."),
@@ -71,6 +90,19 @@ def init_db():
     )
     db.execute(
         '''
+        CREATE TABLE IF NOT EXISTS staff_users(
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT NOT NULL,
+            email TEXT NOT NULL UNIQUE,
+            password TEXT NOT NULL,
+            role TEXT NOT NULL,
+            is_active INTEGER NOT NULL DEFAULT 1,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+        '''
+    )
+    db.execute(
+        '''
         CREATE TABLE IF NOT EXISTS foods(
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             name TEXT NOT NULL,
@@ -86,6 +118,7 @@ def init_db():
         CREATE TABLE IF NOT EXISTS orders(
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             user_id INTEGER NOT NULL,
+            customer_name TEXT NOT NULL DEFAULT '',
             total REAL NOT NULL,
             original_total REAL NOT NULL DEFAULT 0,
             discount REAL NOT NULL DEFAULT 0,
@@ -94,7 +127,9 @@ def init_db():
             phone TEXT NOT NULL,
             payment TEXT NOT NULL,
             status TEXT NOT NULL,
+            delivery_person TEXT,
             estimated_delivery_time TEXT,
+            auto_delivered_at TEXT,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             FOREIGN KEY(user_id) REFERENCES users(id)
         )
@@ -130,11 +165,92 @@ def init_db():
         )
         '''
     )
+    ensure_staff_schema(db)
+    ensure_orders_schema(db)
     db.commit()
     normalize_db_image_paths(db)
     seed_foods(db)
+    seed_staff_users(db)
     fix_food_images(db)
     ensure_image_aliases()
+
+
+def ensure_staff_schema(db):
+    staff_columns = {col["name"] for col in db.execute("PRAGMA table_info(staff_users)").fetchall()}
+    if not staff_columns:
+        return
+    if "role" not in staff_columns:
+        db.execute("ALTER TABLE staff_users ADD COLUMN role TEXT NOT NULL DEFAULT 'manager'")
+    if "is_active" not in staff_columns:
+        db.execute("ALTER TABLE staff_users ADD COLUMN is_active INTEGER NOT NULL DEFAULT 1")
+
+
+def seed_staff_users(db):
+    manager_password_hash = generate_password_hash(MANAGER_PASSWORD)
+    existing_manager = db.execute("SELECT id FROM staff_users WHERE email = ?", (MANAGER_EMAIL,)).fetchone()
+    if not existing_manager:
+        db.execute(
+            "INSERT INTO staff_users (name, email, password, role) VALUES (?, ?, ?, ?)",
+            ("Hotel Manager", MANAGER_EMAIL, manager_password_hash, "manager"),
+        )
+
+    for name, email, password in DELIVERY_STAFF:
+        existing_partner = db.execute("SELECT id FROM staff_users WHERE email = ?", (email,)).fetchone()
+        if not existing_partner:
+            db.execute(
+                "INSERT INTO staff_users (name, email, password, role) VALUES (?, ?, ?, ?)",
+                (name, email, generate_password_hash(password), "delivery_partner"),
+            )
+
+
+def ensure_orders_schema(db):
+    order_columns = {col["name"] for col in db.execute("PRAGMA table_info(orders)").fetchall()}
+
+    if "customer_name" not in order_columns:
+        db.execute("ALTER TABLE orders ADD COLUMN customer_name TEXT NOT NULL DEFAULT ''")
+    if "delivery_person" not in order_columns:
+        db.execute("ALTER TABLE orders ADD COLUMN delivery_person TEXT")
+    if "auto_delivered_at" not in order_columns:
+        db.execute("ALTER TABLE orders ADD COLUMN auto_delivered_at TEXT")
+
+    db.execute(
+        '''
+        UPDATE orders
+        SET customer_name = (
+            SELECT users.name FROM users WHERE users.id = orders.user_id
+        )
+        WHERE customer_name IS NULL OR TRIM(customer_name) = ''
+        '''
+    )
+    db.execute(
+        '''
+        UPDATE orders
+        SET auto_delivered_at = datetime(created_at, '+30 minutes')
+        WHERE auto_delivered_at IS NULL OR TRIM(auto_delivered_at) = ''
+        '''
+    )
+
+
+def allocate_delivery_person(order_id):
+    if not DELIVERY_TEAM:
+        return "Not Assigned"
+    return DELIVERY_TEAM[(order_id - 1) % len(DELIVERY_TEAM)]
+
+
+def update_due_delivery_statuses():
+    db = get_db()
+    current_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    db.execute(
+        '''
+        UPDATE orders
+        SET status = 'Delivered'
+        WHERE status != 'Delivered'
+          AND auto_delivered_at IS NOT NULL
+          AND auto_delivered_at <= ?
+        ''',
+        (current_time,),
+    )
+    db.commit()
 
 
 def normalize_db_image_paths(db):
@@ -225,7 +341,7 @@ def close_connection(exception):
 
 def login_required(func):
     def wrapper(*args, **kwargs):
-        if not session.get("user_id"):
+        if session.get("account_role") != "customer" or not session.get("user_id"):
             flash("Please log in to continue.", "warning")
             return redirect(url_for("login"))
         return func(*args, **kwargs)
@@ -234,15 +350,30 @@ def login_required(func):
     return wrapper
 
 
-def admin_required(func):
-    def wrapper(*args, **kwargs):
-        if not session.get("admin_logged_in"):
-            flash("Admin access required.", "warning")
-            return redirect(url_for("admin_login"))
-        return func(*args, **kwargs)
+def role_required(*allowed_roles):
+    def decorator(func):
+        def wrapper(*args, **kwargs):
+            if session.get("account_role") not in allowed_roles:
+                flash("Access required for this dashboard.", "warning")
+                return redirect(url_for("home"))
+            return func(*args, **kwargs)
 
-    wrapper.__name__ = func.__name__
-    return wrapper
+        wrapper.__name__ = func.__name__
+        return wrapper
+
+    return decorator
+
+
+def admin_required(func):
+    return role_required("manager")(func)
+
+
+def delivery_required(func):
+    return role_required("delivery_partner")(func)
+
+
+def customer_required(func):
+    return role_required("customer")(func)
 
 
 def calculate_discount(total):
@@ -256,9 +387,9 @@ def calculate_discount(total):
 
 
 def calculate_estimated_delivery():
-    '''Calculate estimated delivery time (30-45 minutes from now)'''
+    '''Calculate estimated delivery time (30 minutes from now)'''
     current_time = datetime.now()
-    delivery_time = current_time + timedelta(minutes=35)
+    delivery_time = current_time + timedelta(minutes=30)
     return delivery_time
 
 
@@ -346,8 +477,9 @@ def login():
             session["user_id"] = user["id"]
             session["user_name"] = user["name"]
             session["user_email"] = user["email"]
+            session["account_role"] = "customer"
             flash(f"Welcome, {user['name']}!", "success")
-            return redirect(url_for("home"))
+            return redirect(url_for("customer_dashboard"))
 
         flash("Invalid email or password.", "danger")
         return redirect(url_for("login"))
@@ -355,13 +487,89 @@ def login():
     return render_template("login.html")
 
 
+@app.route("/customer/dashboard")
+@login_required
+def customer_dashboard():
+    recent_orders = query_db(
+        '''
+        SELECT *
+        FROM orders
+        WHERE user_id = ?
+        ORDER BY created_at DESC
+        LIMIT 6
+        ''',
+        (session["user_id"],)
+    )
+    order_summary = query_db(
+        '''
+        SELECT
+            COUNT(*) AS total_orders,
+            SUM(CASE WHEN status = 'Delivered' THEN 1 ELSE 0 END) AS delivered_orders,
+            SUM(CASE WHEN status != 'Delivered' THEN 1 ELSE 0 END) AS active_orders
+        FROM orders
+        WHERE user_id = ?
+        ''',
+        (session["user_id"],),
+        one=True,
+    )
+    return render_template(
+        "customer_dashboard.html",
+        recent_orders=recent_orders,
+        order_summary=order_summary,
+    )
+
+
 @app.route("/logout")
 def logout():
-    session_keys = ["user_id", "user_name", "user_email", "cart"]
+    session_keys = ["user_id", "user_name", "user_email", "cart", "account_role", "staff_id", "staff_name", "staff_email", "staff_role"]
     for key in session_keys:
         session.pop(key, None)
     flash("You have been logged out.", "info")
     return redirect(url_for("home"))
+
+
+@app.route("/manager/login", methods=["GET", "POST"])
+def manager_login():
+    if request.method == "POST":
+        email = request.form.get("email")
+        password = request.form.get("password")
+
+        staff = query_db("SELECT * FROM staff_users WHERE email = ? AND role = 'manager' AND is_active = 1", (email,), one=True)
+        if staff and check_password_hash(staff["password"], password):
+            session["staff_id"] = staff["id"]
+            session["staff_name"] = staff["name"]
+            session["staff_email"] = staff["email"]
+            session["staff_role"] = staff["role"]
+            session["account_role"] = "manager"
+            flash(f"Welcome, {staff['name']}!", "success")
+            return redirect(url_for("admin_dashboard"))
+
+        flash("Invalid manager credentials.", "danger")
+        return redirect(url_for("manager_login"))
+
+    return render_template("manager_login.html")
+
+
+@app.route("/delivery/login", methods=["GET", "POST"])
+def delivery_login():
+    if request.method == "POST":
+        email = request.form.get("email")
+        password = request.form.get("password")
+
+        staff = query_db("SELECT * FROM staff_users WHERE email = ? AND role = 'delivery_partner' AND is_active = 1", (email,), one=True)
+        if staff and check_password_hash(staff["password"], password):
+            session["staff_id"] = staff["id"]
+            session["staff_name"] = staff["name"]
+            session["staff_email"] = staff["email"]
+            session["staff_role"] = staff["role"]
+            session["account_role"] = "delivery_partner"
+            flash(f"Welcome, {staff['name']}!", "success")
+            return redirect(url_for("delivery_dashboard"))
+
+        flash("Invalid delivery partner credentials.", "danger")
+        return redirect(url_for("delivery_login"))
+
+    return render_template("delivery_login.html")
 
 
 @app.route("/menu")
@@ -475,25 +683,45 @@ def checkout():
     estimated_delivery = calculate_estimated_delivery()
 
     if request.method == "POST":
+        customer_name = (request.form.get("customer_name") or "").strip()
         address = request.form.get("address")
         phone = request.form.get("phone")
         payment = request.form.get("payment")
 
-        if not address or not phone or not payment:
+        if not customer_name or not address or not phone or not payment:
             flash("All fields are required.", "danger")
             return redirect(url_for("checkout"))
 
         estimated_delivery = calculate_estimated_delivery()
+        auto_delivered_at = datetime.now() + timedelta(minutes=30)
 
         db = get_db()
         cursor = db.execute(
             '''
-            INSERT INTO orders (user_id, total, original_total, discount, discount_percentage, address, phone, payment, status, estimated_delivery_time)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            INSERT INTO orders (user_id, customer_name, total, original_total, discount, discount_percentage, address, phone, payment, status, estimated_delivery_time, auto_delivered_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ''',
-            (session["user_id"], final_total, total, discount_amount, discount_percentage, address, phone, payment, "Preparing", estimated_delivery.strftime("%Y-%m-%d %H:%M:%S"))
+            (
+                session["user_id"],
+                customer_name,
+                final_total,
+                total,
+                discount_amount,
+                discount_percentage,
+                address,
+                phone,
+                payment,
+                "Preparing",
+                estimated_delivery.strftime("%Y-%m-%d %H:%M:%S"),
+                auto_delivered_at.strftime("%Y-%m-%d %H:%M:%S"),
+            )
         )
         order_id = cursor.lastrowid
+        assigned_delivery_person = allocate_delivery_person(order_id)
+        db.execute(
+            "UPDATE orders SET delivery_person = ? WHERE id = ?",
+            (assigned_delivery_person, order_id),
+        )
 
         for item in items:
             db.execute(
@@ -506,7 +734,17 @@ def checkout():
         flash("Order placed successfully!", "success")
         return redirect(url_for("order_success", order_id=order_id))
 
-    return render_template("checkout.html", items=items, total=total, discount_amount=discount_amount, discount_percentage=discount_percentage, final_total=final_total, qr_code=qr_code, estimated_delivery=estimated_delivery)
+    return render_template(
+        "checkout.html",
+        items=items,
+        total=total,
+        discount_amount=discount_amount,
+        discount_percentage=discount_percentage,
+        final_total=final_total,
+        qr_code=qr_code,
+        estimated_delivery=estimated_delivery,
+        customer_name=session.get("user_name", ""),
+    )
 
 
 def generate_upi_qr(amount, upi_id="9392831334@paytm", payee_name="FoodFlux"):
@@ -532,6 +770,7 @@ def generate_upi_qr(amount, upi_id="9392831334@paytm", payee_name="FoodFlux"):
 @app.route("/order_success/<int:order_id>")
 @login_required
 def order_success(order_id):
+    update_due_delivery_statuses()
     order = query_db("SELECT * FROM orders WHERE id = ? AND user_id = ?", (order_id, session["user_id"]), one=True)
     if not order:
         flash("Order not found.", "danger")
@@ -543,6 +782,7 @@ def order_success(order_id):
 @app.route("/track_order/<int:order_id>")
 @login_required
 def track_order(order_id):
+    update_due_delivery_statuses()
     order = query_db("SELECT * FROM orders WHERE id = ? AND user_id = ?", (order_id, session["user_id"]), one=True)
     if not order:
         flash("Order not found.", "danger")
@@ -624,43 +864,88 @@ def rate_item(order_id, food_id):
 
 @app.route("/admin_login", methods=["GET", "POST"])
 def admin_login():
-    if request.method == "POST":
-        email = request.form.get("email")
-        password = request.form.get("password")
-
-        if email == ADMIN_EMAIL and password == ADMIN_PASSWORD:
-            session["admin_logged_in"] = True
-            flash("Admin login successful.", "success")
-            return redirect(url_for("admin_dashboard"))
-
-        flash("Invalid admin credentials.", "danger")
-        return redirect(url_for("admin_login"))
-
-    return render_template("admin_login.html")
+    return redirect(url_for("manager_login"))
 
 
 @app.route("/admin_logout")
 def admin_logout():
-    session.pop("admin_logged_in", None)
-    flash("Admin logged out.", "info")
-    return redirect(url_for("admin_login"))
+    return redirect(url_for("logout"))
 
 
 @app.route("/admin")
+@app.route("/manager/dashboard")
 @admin_required
 def admin_dashboard():
+    update_due_delivery_statuses()
     foods = query_db("SELECT * FROM foods ORDER BY id DESC")
-    return render_template("admin_dashboard.html", foods=foods)
+    order_stats = query_db(
+        '''
+        SELECT
+            COUNT(*) AS total_orders,
+            SUM(CASE WHEN status = 'Delivered' THEN 1 ELSE 0 END) AS delivered_orders,
+            SUM(CASE WHEN status != 'Delivered' THEN 1 ELSE 0 END) AS active_orders
+        FROM orders
+        ''',
+        one=True,
+    )
+    delivery_panel = query_db(
+        '''
+        SELECT
+            o.delivery_person,
+            COUNT(*) AS assigned_orders,
+            SUM(CASE WHEN o.status = 'Delivered' THEN 1 ELSE 0 END) AS delivered_orders,
+            SUM(CASE WHEN o.status != 'Delivered' THEN 1 ELSE 0 END) AS active_orders,
+            COALESCE(
+                (
+                    SELECT o2.status
+                    FROM orders o2
+                    WHERE o2.delivery_person = o.delivery_person
+                    ORDER BY o2.created_at DESC
+                    LIMIT 1
+                ),
+                'Idle'
+            ) AS latest_status
+        FROM orders o
+        WHERE o.delivery_person IS NOT NULL AND TRIM(o.delivery_person) != ''
+        GROUP BY o.delivery_person
+        ORDER BY active_orders DESC, assigned_orders DESC
+        '''
+    )
+    return render_template(
+        "manager_dashboard.html",
+        foods=foods,
+        order_stats=order_stats,
+        delivery_panel=delivery_panel,
+    )
 
 
 @app.route("/admin/orders")
+@app.route("/manager/orders")
 @admin_required
 def admin_orders():
-    orders = query_db("SELECT * FROM orders ORDER BY created_at DESC")
+    update_due_delivery_statuses()
+    orders = query_db(
+        '''
+        SELECT
+            o.*,
+            COALESCE(NULLIF(o.customer_name, ''), u.name, 'Guest') AS customer_name,
+            u.email AS customer_email,
+            CASE
+                WHEN o.status = 'Delivered' THEN 'Completed'
+                WHEN o.status = 'Out for Delivery' THEN 'On Route'
+                WHEN o.status = 'Ready' THEN 'Ready to Dispatch'
+                ELSE 'Preparing'
+            END AS delivery_boy_status
+        FROM orders o
+        LEFT JOIN users u ON u.id = o.user_id
+        ORDER BY o.created_at DESC
+        '''
+    )
     return render_template("admin_orders.html", orders=orders)
 
 
 @app.route("/admin/foods", methods=["GET", "POST"])
+@app.route("/manager/foods", methods=["GET", "POST"])
 @admin_required
 def admin_foods():
     if request.method == "POST":
@@ -698,7 +983,51 @@ def admin_foods():
     return render_template("admin_food_form.html", foods=foods)
 
 
+@app.route("/admin/foods/edit/<int:food_id>", methods=["POST"])
+@app.route("/manager/foods/edit/<int:food_id>", methods=["POST"])
+@admin_required
+def edit_food(food_id):
+    name = request.form.get("name")
+    category = request.form.get("category")
+    price = request.form.get("price")
+    description = request.form.get("description")
+    image_file = request.files.get("image_file")
+
+    if not name or not category or not price or not description:
+        flash("All fields except image are required for update.", "danger")
+        return redirect(url_for("admin_foods"))
+
+    try:
+        price = float(price)
+    except ValueError:
+        flash("Invalid price.", "danger")
+        return redirect(url_for("admin_foods"))
+
+    db = get_db()
+    existing = db.execute("SELECT image FROM foods WHERE id = ?", (food_id,)).fetchone()
+    if not existing:
+        flash("Food item not found.", "warning")
+        return redirect(url_for("admin_foods"))
+
+    updated_image = existing["image"]
+    if image_file and image_file.filename:
+        saved_image, upload_error = save_uploaded_food_image(image_file)
+        if upload_error:
+            flash(upload_error, "danger")
+            return redirect(url_for("admin_foods"))
+        updated_image = saved_image
+
+    db.execute(
+        "UPDATE foods SET name = ?, category = ?, price = ?, image = ?, description = ? WHERE id = ?",
+        (name, category, price, updated_image, description, food_id),
+    )
+    db.commit()
+    flash("Food item updated successfully.", "success")
+    return redirect(url_for("admin_foods"))
+
+
 @app.route("/admin/foods/delete/<int:food_id>", methods=["POST"])
+@app.route("/manager/foods/delete/<int:food_id>", methods=["POST"])
 @admin_required
 def delete_food(food_id):
     db = get_db()
@@ -730,6 +1059,7 @@ def delete_food(food_id):
 
 
 @app.route("/admin/order/status/<int:order_id>/<status>")
+@app.route("/manager/order/status/<int:order_id>/<status>")
 @admin_required
 def update_order_status(order_id, status):
     valid_statuses = ["Preparing", "Ready", "Out for Delivery", "Delivered"]
@@ -743,8 +1073,68 @@ def update_order_status(order_id, status):
     return redirect(url_for("admin_orders"))
 
 
+@app.route("/delivery/dashboard")
+@delivery_required
+def delivery_dashboard():
+    update_due_delivery_statuses()
+    assigned_orders = query_db(
+        '''
+        SELECT
+            o.*,
+            u.name AS customer_name,
+            u.email AS customer_email
+        FROM orders o
+        LEFT JOIN users u ON u.id = o.user_id
+        WHERE o.delivery_person = ?
+        ORDER BY o.created_at DESC
+        ''',
+        (session.get("staff_name"),)
+    )
+    delivery_stats = query_db(
+        '''
+        SELECT
+            COUNT(*) AS total_assigned,
+            SUM(CASE WHEN status = 'Delivered' THEN 1 ELSE 0 END) AS delivered_orders,
+            SUM(CASE WHEN status != 'Delivered' THEN 1 ELSE 0 END) AS active_orders
+        FROM orders
+        WHERE delivery_person = ?
+        ''',
+        (session.get("staff_name"),),
+        one=True,
+    )
+    return render_template(
+        "delivery_dashboard.html",
+        assigned_orders=assigned_orders,
+        delivery_stats=delivery_stats,
+    )
+
+
+@app.route("/delivery/order/status/<int:order_id>/<status>")
+@delivery_required
+def delivery_update_order_status(order_id, status):
+    valid_statuses = ["Ready", "Out for Delivery", "Delivered"]
+    if status not in valid_statuses:
+        flash("Invalid delivery status.", "danger")
+        return redirect(url_for("delivery_dashboard"))
+
+    db = get_db()
+    order = db.execute(
+        "SELECT id FROM orders WHERE id = ? AND delivery_person = ?",
+        (order_id, session.get("staff_name")),
+    ).fetchone()
+    if not order:
+        flash("Order not assigned to you.", "warning")
+        return redirect(url_for("delivery_dashboard"))
+
+    db.execute("UPDATE orders SET status = ? WHERE id = ?", (status, order_id))
+    db.commit()
+    flash(f"Delivery status updated to {status}.", "success")
+    return redirect(url_for("delivery_dashboard"))
+
+
 @app.route("/api/order/check/<int:order_id>")
 def check_order_status(order_id):
+    update_due_delivery_statuses()
     order = query_db("SELECT * FROM orders WHERE id = ?", (order_id,), one=True)
     if order:
         return jsonify({"status": order["status"], "id": order["id"]})

@@ -1,25 +1,24 @@
 {% extends "base.html" %}
 {% block content %}
 <div class="row justify-content-center">
-    <div class="col-md-6">
+    <div class="col-md-5">
         <div class="card shadow-sm">
             <div class="card-body">
-                <h2 class="card-title mb-4">Customer Login</h2>
-                <p class="text-muted mb-4">Access your customer dashboard, track orders, and place new food orders.</p>
+                <h2 class="card-title mb-3">Hotel Manager Login</h2>
+                <p class="text-muted mb-4">Access menu control, order handling, and delivery operations.</p>
                 <form method="post">
                     <div class="mb-3">
                         <label class="form-label">Email</label>
-                        <input type="email" name="email" class="form-control" placeholder="Enter your email" required />
+                        <input type="email" name="email" class="form-control" placeholder="manager@ckfood.com" required />
                     </div>
                     <div class="mb-3">
                         <label class="form-label">Password</label>
-                        <input type="password" name="password" class="form-control" placeholder="Enter your password" required />
+                        <input type="password" name="password" class="form-control" placeholder="Enter manager password" required />
                     </div>
-                    <button type="submit" class="btn btn-primary w-100">Login</button>
+                    <button class="btn btn-primary w-100">Login</button>
                 </form>
                 <div class="text-center mt-3 small text-muted">
-                    <a href="{{ url_for('register') }}">New customer? Register now</a> |
-                    <a href="{{ url_for('manager_login') }}">Manager login</a> |
+                    <a href="{{ url_for('login') }}">Customer login</a> |
                     <a href="{{ url_for('delivery_login') }}">Delivery login</a>
                 </div>
             </div>

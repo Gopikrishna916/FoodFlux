@@ -7,6 +7,10 @@
                 <h2 class="card-title mb-4">Checkout</h2>
                 <form method="post">
                     <div class="mb-3">
+                        <label class="form-label">Customer Name</label>
+                        <input type="text" name="customer_name" class="form-control" value="{{ customer_name }}" placeholder="Enter customer name" required />
+                    </div>
+                    <div class="mb-3">
                         <label class="form-label">Delivery Address</label>
                         <textarea name="address" class="form-control" rows="3" placeholder="Enter your address" required></textarea>
                     </div>
@@ -38,16 +42,6 @@
                                 <span class="badge bg-success-subtle text-success mb-3">UPI Payment</span>
                                 <h6 class="card-title mb-2">Scan and Pay</h6>
                                 <p class="text-muted small mb-3">Open Google Pay, PhonePe, Paytm, or any UPI app and scan the QR code below.</p>
-                                <div class="demo-scanner mb-3" aria-label="Demo UPI scanner preview">
-                                    <div class="scanner-frame">
-                                        <div class="scanner-corners scanner-corner-top-left"></div>
-                                        <div class="scanner-corners scanner-corner-top-right"></div>
-                                        <div class="scanner-corners scanner-corner-bottom-left"></div>
-                                        <div class="scanner-corners scanner-corner-bottom-right"></div>
-                                        <div class="scanner-line"></div>
-                                        <div class="scanner-label">Demo Scanner</div>
-                                    </div>
-                                </div>
                                 {% if qr_code %}
                                 <img src="data:image/png;base64,{{ qr_code }}" alt="UPI QR Code" class="img-fluid rounded border p-2 bg-white" style="max-width: 260px;">
                                 {% else %}
@@ -118,7 +112,7 @@
                                 {{ estimated_delivery.strftime('%I:%M %p') if estimated_delivery else 'Calculating...' }}
                             </span>
                         </div>
-                        <small class="text-muted d-block mt-2">🚚 Typically delivers in 30-45 minutes</small>
+                        <small class="text-muted d-block mt-2">🚚 Typically delivers in about 30 minutes</small>
                     </div>
                 </div>
                 

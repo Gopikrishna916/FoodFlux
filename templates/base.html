@@ -25,18 +25,23 @@
                     <li class="nav-item"><a class="nav-link" href="{{ url_for('home') }}">Home</a></li>
                     <li class="nav-item"><a class="nav-link" href="{{ url_for('menu') }}">Menu</a></li>
                     <li class="nav-item"><a class="nav-link" href="{{ url_for('cart') }}">Cart <span class="badge bg-primary">{{ cart_count }}</span></a></li>
-                    {% if session.user_name %}
+                    {% if session.account_role == 'customer' %}
+                    <li class="nav-item"><a class="nav-link" href="{{ url_for('customer_dashboard') }}">Customer Dashboard</a></li>
                     <li class="nav-item"><a class="nav-link disabled">Hi, {{ session.user_name }}</a></li>
                     <li class="nav-item"><a class="nav-link text-danger" href="{{ url_for('logout') }}">Logout</a></li>
+                    {% elif session.account_role == 'manager' %}
+                    <li class="nav-item"><a class="nav-link" href="{{ url_for('admin_dashboard') }}">Manager Dashboard</a></li>
+                    <li class="nav-item"><a class="nav-link disabled">Hi, {{ session.staff_name }}</a></li>
+                    <li class="nav-item"><a class="nav-link text-danger" href="{{ url_for('logout') }}">Logout</a></li>
+                    {% elif session.account_role == 'delivery_partner' %}
+                    <li class="nav-item"><a class="nav-link" href="{{ url_for('delivery_dashboard') }}">Delivery Dashboard</a></li>
+                    <li class="nav-item"><a class="nav-link disabled">Hi, {{ session.staff_name }}</a></li>
+                    <li class="nav-item"><a class="nav-link text-danger" href="{{ url_for('logout') }}">Logout</a></li>
                     {% else %}
-                    <li class="nav-item"><a class="nav-link" href="{{ url_for('login') }}">Login</a></li>
+                    <li class="nav-item"><a class="nav-link" href="{{ url_for('login') }}">Customer Login</a></li>
+                    <li class="nav-item"><a class="nav-link" href="{{ url_for('manager_login') }}">Manager Login</a></li>
+                    <li class="nav-item"><a class="nav-link" href="{{ url_for('delivery_login') }}">Delivery Login</a></li>
                     <li class="nav-item"><a class="nav-link" href="{{ url_for('register') }}">Register</a></li>
-                    {% endif %}
-                    {% if session.admin_logged_in %}
-                    <li class="nav-item"><a class="nav-link" href="{{ url_for('admin_dashboard') }}">Admin</a></li>
-                    <li class="nav-item"><a class="nav-link text-danger" href="{{ url_for('admin_logout') }}">Admin Logout</a></li>
-                    {% else %}
-                    <li class="nav-item"><a class="nav-link" href="{{ url_for('admin_login') }}">Admin</a></li>
                     {% endif %}
                 </ul>
             </div>
@@ -101,7 +106,7 @@
 
                 <div class="row align-items-center">
                     <div class="col-md-6 text-center text-md-start">
-                        <p class="mb-0 small">© 2024 FoodFlux. All rights reserved.</p>
+                        <p class="mb-0 small">Copyright @2026 CK IT Solutions</p>
                     </div>
                     <div class="col-md-6 text-center text-md-end">
                         <p class="mb-0 small">Built with Flask, Bootstrap, SQLite</p>

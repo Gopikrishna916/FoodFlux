@@ -1,0 +1,97 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-4 flex-wrap gap-2">
+    <div>
+        <h2>Delivery Partner Dashboard</h2>
+        <p class="text-muted mb-0">Assigned orders, delivery updates, and live status controls.</p>
+    </div>
+    <div class="small text-muted">Auto refresh: every 10 seconds</div>
+</div>
+
+<div class="row g-3 mb-4">
+    <div class="col-md-4">
+        <div class="card shadow-sm border-0 bg-light h-100">
+            <div class="card-body">
+                <div class="text-muted small">Assigned Orders</div>
+                <div class="fs-3 fw-bold">{{ delivery_stats.total_assigned or 0 }}</div>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-4">
+        <div class="card shadow-sm border-0 bg-light h-100">
+            <div class="card-body">
+                <div class="text-muted small">Active Orders</div>
+                <div class="fs-3 fw-bold text-primary">{{ delivery_stats.active_orders or 0 }}</div>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-4">
+        <div class="card shadow-sm border-0 bg-light h-100">
+            <div class="card-body">
+                <div class="text-muted small">Delivered</div>
+                <div class="fs-3 fw-bold text-success">{{ delivery_stats.delivered_orders or 0 }}</div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="card shadow-sm">
+    <div class="card-body">
+        <div class="d-flex justify-content-between align-items-center mb-3">
+            <h3 class="h5 mb-0">Assigned Orders</h3>
+            <small class="text-muted">Logged in as {{ session.staff_name }}</small>
+        </div>
+        <div class="table-responsive">
+            <table class="table align-middle mb-0">
+                <thead class="table-light">
+                    <tr>
+                        <th>Order</th>
+                        <th>Customer</th>
+                        <th>Status</th>
+                        <th>Address</th>
+                        <th>Phone</th>
+                        <th>Actions</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% if assigned_orders %}
+                        {% for order in assigned_orders %}
+                        <tr>
+                            <td>#{{ order.id }}</td>
+                            <td>
+                                {{ order.customer_name }}<br>
+                                <small class="text-muted">{{ order.customer_email }}</small>
+                            </td>
+                            <td>
+                                <span class="badge {% if order.status == 'Delivered' %}bg-success{% elif order.status == 'Out for Delivery' %}bg-primary{% elif order.status == 'Ready' %}bg-info text-dark{% else %}bg-warning text-dark{% endif %}">
+                                    {{ order.status }}
+                                </span>
+                            </td>
+                            <td>{{ order.address }}</td>
+                            <td>{{ order.phone }}</td>
+                            <td>
+                                <div class="d-flex flex-wrap gap-1">
+                                    <a href="{{ url_for('delivery_update_order_status', order_id=order.id, status='Ready') }}" class="btn btn-sm btn-outline-info">Ready</a>
+                                    <a href="{{ url_for('delivery_update_order_status', order_id=order.id, status='Out for Delivery') }}" class="btn btn-sm btn-outline-primary">Out</a>
+                                    <a href="{{ url_for('delivery_update_order_status', order_id=order.id, status='Delivered') }}" class="btn btn-sm btn-outline-success">Done</a>
+                                </div>
+                            </td>
+                        </tr>
+                        {% endfor %}
+                    {% else %}
+                        <tr>
+                            <td colspan="6" class="text-center text-muted">No orders assigned yet.</td>
+                        </tr>
+                    {% endif %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>
+
+<script>
+    setTimeout(function () {
+        window.location.reload();
+    }, 10000);
+</script>
+{% endblock %}
