@@ -3,52 +3,82 @@
 <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>FoodFlux | Smart Food Delivery</title>
+    <meta name="description" content="FoodFlux - Delicious food delivered fast with live tracking and seamless checkout." />
+    <title>FoodFlux | Delicious Food Delivered Fast</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Poppins:wght@500;600;700;800&display=swap" rel="stylesheet" />
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css" />
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet" />
     <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}" />
 </head>
 <body>
-    <nav class="navbar navbar-expand-lg navbar-light bg-white shadow-sm sticky-top">
-        <div class="container">
+    <nav class="navbar navbar-expand-xl sticky-top">
+        <div class="container nav-shell">
             <a class="navbar-brand brand-logo d-flex align-items-center gap-2" href="{{ url_for('home') }}">
-                <span class="logo-badge" aria-hidden="true">FF</span>
+                <span class="logo-badge" aria-hidden="true"><i class="bi bi-lightning-charge-fill"></i></span>
                 <span class="brand-copy">
                     <span class="brand-main">FoodFlux</span>
                     <span class="brand-sub">Smart Food Delivery</span>
                 </span>
             </a>
-            <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbarNav">
+
+            <form action="{{ url_for('menu') }}" method="get" class="nav-search d-none d-xl-flex" role="search">
+                <i class="bi bi-search"></i>
+                <input type="text" name="q" class="form-control" placeholder="Search for pizzas, burgers, desserts..." />
+            </form>
+
+            <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbarNav" aria-controls="navbarNav" aria-expanded="false" aria-label="Toggle navigation">
                 <span class="navbar-toggler-icon"></span>
             </button>
+
             <div class="collapse navbar-collapse" id="navbarNav">
-                <ul class="navbar-nav ms-auto align-items-center">
+                <ul class="navbar-nav ms-auto align-items-xl-center gap-xl-2">
                     <li class="nav-item"><a class="nav-link" href="{{ url_for('home') }}">Home</a></li>
                     <li class="nav-item"><a class="nav-link" href="{{ url_for('menu') }}">Menu</a></li>
-                    <li class="nav-item"><a class="nav-link" href="{{ url_for('cart') }}">Cart <span class="badge bg-primary">{{ cart_count }}</span></a></li>
+                    <li class="nav-item nav-mobile-search d-xl-none mt-2 mb-2">
+                        <form action="{{ url_for('menu') }}" method="get" class="nav-search" role="search">
+                            <i class="bi bi-search"></i>
+                            <input type="text" name="q" class="form-control" placeholder="Search dishes" />
+                        </form>
+                    </li>
+                    <li class="nav-item">
+                        <a class="nav-link nav-cart-link" href="{{ url_for('cart') }}" aria-label="Open cart">
+                            <i class="bi bi-bag-check"></i>
+                            <span>Cart</span>
+                            <span class="cart-badge">{{ cart_count }}</span>
+                        </a>
+                    </li>
+
                     {% if session.account_role == 'customer' %}
-                    <li class="nav-item"><a class="nav-link" href="{{ url_for('customer_dashboard') }}">Customer Dashboard</a></li>
-                    <li class="nav-item"><a class="nav-link disabled">Hi, {{ session.user_name }}</a></li>
-                    <li class="nav-item"><a class="nav-link text-danger" href="{{ url_for('logout') }}">Logout</a></li>
+                    <li class="nav-item"><a class="nav-link" href="{{ url_for('customer_dashboard') }}">Dashboard</a></li>
+                    <li class="nav-item"><span class="nav-link disabled">Hi, {{ session.user_name }}</span></li>
+                    <li class="nav-item"><a class="btn btn-sm btn-outline-danger nav-cta" href="{{ url_for('logout') }}">Logout</a></li>
                     {% elif session.account_role == 'manager' %}
-                    <li class="nav-item"><a class="nav-link" href="{{ url_for('admin_dashboard') }}">Manager Dashboard</a></li>
-                    <li class="nav-item"><a class="nav-link disabled">Hi, {{ session.staff_name }}</a></li>
-                    <li class="nav-item"><a class="nav-link text-danger" href="{{ url_for('logout') }}">Logout</a></li>
+                    <li class="nav-item"><a class="nav-link" href="{{ url_for('admin_dashboard') }}">Manager</a></li>
+                    <li class="nav-item"><span class="nav-link disabled">Hi, {{ session.staff_name }}</span></li>
+                    <li class="nav-item"><a class="btn btn-sm btn-outline-danger nav-cta" href="{{ url_for('logout') }}">Logout</a></li>
                     {% elif session.account_role == 'delivery_partner' %}
-                    <li class="nav-item"><a class="nav-link" href="{{ url_for('delivery_dashboard') }}">Delivery Dashboard</a></li>
-                    <li class="nav-item"><a class="nav-link disabled">Hi, {{ session.staff_name }}</a></li>
-                    <li class="nav-item"><a class="nav-link text-danger" href="{{ url_for('logout') }}">Logout</a></li>
+                    <li class="nav-item"><a class="nav-link" href="{{ url_for('delivery_dashboard') }}">Delivery</a></li>
+                    <li class="nav-item"><span class="nav-link disabled">Hi, {{ session.staff_name }}</span></li>
+                    <li class="nav-item"><a class="btn btn-sm btn-outline-danger nav-cta" href="{{ url_for('logout') }}">Logout</a></li>
                     {% else %}
-                    <li class="nav-item"><a class="nav-link" href="{{ url_for('login') }}">Customer Login</a></li>
-                    <li class="nav-item"><a class="nav-link" href="{{ url_for('manager_login') }}">Manager Login</a></li>
-                    <li class="nav-item"><a class="nav-link" href="{{ url_for('delivery_login') }}">Delivery Login</a></li>
-                    <li class="nav-item"><a class="nav-link" href="{{ url_for('register') }}">Register</a></li>
+                    <li class="nav-item"><a class="nav-link" href="{{ url_for('login') }}">Login</a></li>
+                    <li class="nav-item"><a class="btn btn-sm btn-outline-dark nav-cta" href="{{ url_for('manager_login') }}">Manager</a></li>
+                    <li class="nav-item"><a class="btn btn-sm btn-primary nav-cta" href="{{ url_for('register') }}">Sign Up</a></li>
                     {% endif %}
+
+                    <li class="nav-item ms-xl-1">
+                        <button type="button" class="theme-toggle" id="themeToggle" aria-label="Toggle dark mode">
+                            <i class="bi bi-moon-stars"></i>
+                        </button>
+                    </li>
                 </ul>
             </div>
         </div>
     </nav>
 
-    <main class="py-4">
+    <main class="py-4 py-lg-5">
         <div class="container">
             {% with messages = get_flashed_messages(with_categories=true) %}
                 {% if messages %}
@@ -70,34 +100,37 @@
                 <div class="row g-4 align-items-start">
                     <div class="col-lg-4">
                         <h5 class="footer-title mb-3">FoodFlux</h5>
-                        <p class="footer-text mb-3">Fresh food, quick delivery, and a simple ordering experience for the VVIT community.</p>
+                        <p class="footer-text mb-3">Fresh food, quick delivery, and an intuitive ordering experience built for hungry teams and families.</p>
                         <div class="d-flex flex-wrap gap-2">
                             <span class="footer-pill">Fast Delivery</span>
                             <span class="footer-pill">Fresh Meals</span>
-                            <span class="footer-pill">Campus Friendly</span>
+                            <span class="footer-pill">Live Tracking</span>
                         </div>
                     </div>
 
                     <div class="col-lg-4">
-                        <h6 class="footer-heading mb-3">Contact</h6>
+                        <h6 class="footer-heading mb-3">Quick Links</h6>
                         <ul class="list-unstyled footer-list mb-0">
-                            <li><strong>Phone:</strong> <a href="tel:+919392831334" class="footer-link">+91 93928 31334</a></li>
-                            <li><strong>Email:</strong> <a href="mailto:chaituk768546@gmail.com" class="footer-link">chaituk768546@gmail.com</a></li>
-                            <li><strong>VIT Guntur:</strong> Vasireddy Venkatadri International Technological University, Uppalapadu Road, Nambur, Pedhakakani Mandal, Guntur, Andhra Pradesh 522508</li>
+                            <li><a href="{{ url_for('home') }}" class="footer-link">Home</a></li>
+                            <li><a href="{{ url_for('menu') }}" class="footer-link">Menu</a></li>
+                            <li><a href="{{ url_for('cart') }}" class="footer-link">Cart</a></li>
+                            <li><a href="{{ url_for('register') }}" class="footer-link">Create Account</a></li>
+                            <li><a href="{{ url_for('login') }}" class="footer-link">Customer Login</a></li>
                         </ul>
                     </div>
 
                     <div class="col-lg-4">
-                        <h6 class="footer-heading mb-3">Location</h6>
-                        <div class="map-card mb-3">
-                            <iframe
-                                title="VVIT University Google Map"
-                                src="https://www.google.com/maps?q=Vasireddy+Venkatadri+International+Technological+University+Uppalapadu+Road+Nambur+Pedhakakani+Mandal+Guntur+Andhra+Pradesh+522508&output=embed"
-                                loading="lazy"
-                                referrerpolicy="no-referrer-when-downgrade"></iframe>
-                        </div>
-                        <div class="d-flex flex-wrap gap-2">
-                            <a href="https://maps.google.com/?q=Vasireddy+Venkatadri+International+Technological+University+Uppalapadu+Road+Nambur+Pedhakakani+Mandal+Guntur+Andhra+Pradesh+522508" target="_blank" class="btn btn-warning btn-sm">Open in Google Maps</a>
+                        <h6 class="footer-heading mb-3">Newsletter</h6>
+                        <p class="footer-text mb-3">Get weekly offers, trending dishes, and launch updates.</p>
+                        <form class="footer-newsletter" onsubmit="return false;">
+                            <input type="email" class="form-control" placeholder="Your email address" aria-label="Email" />
+                            <button class="btn btn-warning" type="submit">Subscribe</button>
+                        </form>
+                        <div class="social-links mt-3">
+                            <a href="#" aria-label="Instagram"><i class="bi bi-instagram"></i></a>
+                            <a href="#" aria-label="Facebook"><i class="bi bi-facebook"></i></a>
+                            <a href="#" aria-label="X"><i class="bi bi-twitter-x"></i></a>
+                            <a href="#" aria-label="YouTube"><i class="bi bi-youtube"></i></a>
                         </div>
                     </div>
                 </div>
@@ -106,7 +139,7 @@
 
                 <div class="row align-items-center">
                     <div class="col-md-6 text-center text-md-start">
-                        <p class="mb-0 small">Copyright @2026 CK IT Solutions</p>
+                        <p class="mb-0 small">Copyright 2026 FoodFlux</p>
                     </div>
                     <div class="col-md-6 text-center text-md-end">
                         <p class="mb-0 small">Built with Flask, Bootstrap, SQLite</p>

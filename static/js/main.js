@@ -1,201 +1,199 @@
-document.addEventListener('DOMContentLoaded', function () {
-    const paymentMethod = document.getElementById('paymentMethod');
-    const upiQRSection = document.getElementById('upiQRSection');
-    const upiApps = document.getElementById('upiApps');
+document.addEventListener("DOMContentLoaded", function () {
+    const paymentMethod = document.getElementById("paymentMethod");
+    const paymentSections = document.querySelectorAll(".payment-section[data-payment]");
+    const paymentInputs = document.querySelectorAll(".payment-input[data-payment-required]");
+    const themeToggle = document.getElementById("themeToggle");
 
-    function toggleUpiPaymentDetails() {
-        if (!paymentMethod || !upiQRSection || !upiApps) {
+    function togglePaymentMethodDetails() {
+        if (!paymentMethod) {
             return;
         }
 
-        const showUpi = paymentMethod.value === 'UPI';
-        upiQRSection.classList.toggle('d-none', !showUpi);
-        upiApps.classList.toggle('d-none', !showUpi);
+        const selected = paymentMethod.value;
+
+        paymentSections.forEach((section) => {
+            const sectionMethod = section.getAttribute("data-payment");
+            section.classList.toggle("d-none", sectionMethod !== selected);
+        });
+
+        paymentInputs.forEach((input) => {
+            const inputMethod = input.getAttribute("data-payment-required");
+            const isSelected = inputMethod === selected;
+
+            if (input.type === "checkbox") {
+                if (!isSelected) {
+                    input.checked = false;
+                }
+            } else if (!isSelected) {
+                input.value = "";
+            }
+
+            input.required = isSelected;
+        });
+    }
+
+    function initTheme() {
+        const storedTheme = localStorage.getItem("foodflux-theme") || "light";
+        document.body.setAttribute("data-theme", storedTheme);
+        updateThemeIcon(storedTheme);
+    }
+
+    function updateThemeIcon(theme) {
+        if (!themeToggle) {
+            return;
+        }
+        const icon = themeToggle.querySelector("i");
+        if (!icon) {
+            return;
+        }
+        icon.className = theme === "dark" ? "bi bi-sun" : "bi bi-moon-stars";
+    }
+
+    function toggleTheme() {
+        const currentTheme = document.body.getAttribute("data-theme") || "light";
+        const nextTheme = currentTheme === "dark" ? "light" : "dark";
+        document.body.setAttribute("data-theme", nextTheme);
+        localStorage.setItem("foodflux-theme", nextTheme);
+        updateThemeIcon(nextTheme);
+    }
+
+    function initScrollReveal() {
+        const revealItems = document.querySelectorAll(".reveal-on-scroll");
+        if (!revealItems.length) {
+            return;
+        }
+
+        if (!("IntersectionObserver" in window)) {
+            revealItems.forEach((item) => item.classList.add("revealed"));
+            return;
+        }
+
+        const observer = new IntersectionObserver(
+            (entries, obs) => {
+                entries.forEach((entry) => {
+                    if (entry.isIntersecting) {
+                        entry.target.classList.add("revealed");
+                        obs.unobserve(entry.target);
+                    }
+                });
+            },
+            { threshold: 0.12 }
+        );
+
+        revealItems.forEach((item) => observer.observe(item));
+    }
+
+    function initWishlistButtons() {
+        const buttons = document.querySelectorAll(".wishlist-btn[data-item]");
+        if (!buttons.length) {
+            return;
+        }
+
+        const storeKey = "foodflux-wishlist";
+        const saved = JSON.parse(localStorage.getItem(storeKey) || "[]");
+        const wishlist = new Set(saved);
+
+        function syncIcon(button, active) {
+            const icon = button.querySelector("i");
+            button.classList.toggle("active", active);
+            if (icon) {
+                icon.className = active ? "bi bi-heart-fill" : "bi bi-heart";
+            }
+        }
+
+        buttons.forEach((button) => {
+            const itemId = button.getAttribute("data-item");
+            syncIcon(button, wishlist.has(itemId));
+
+            button.addEventListener("click", function () {
+                if (wishlist.has(itemId)) {
+                    wishlist.delete(itemId);
+                    syncIcon(button, false);
+                } else {
+                    wishlist.add(itemId);
+                    syncIcon(button, true);
+                }
+                localStorage.setItem(storeKey, JSON.stringify(Array.from(wishlist)));
+            });
+        });
+    }
+
+    function initQtySteppers() {
+        const controls = document.querySelectorAll(".qty-stepper");
+        controls.forEach((wrapper) => {
+            const input = wrapper.querySelector(".qty-input");
+            const buttons = wrapper.querySelectorAll(".qty-btn");
+            if (!input || !buttons.length) {
+                return;
+            }
+
+            buttons.forEach((button) => {
+                button.addEventListener("click", function () {
+                    const action = button.getAttribute("data-action");
+                    const min = parseInt(input.getAttribute("min") || "1", 10);
+                    const max = parseInt(input.getAttribute("max") || "99", 10);
+                    let value = parseInt(input.value || "1", 10);
+                    value = Number.isNaN(value) ? min : value;
+
+                    if (action === "plus") {
+                        value += 1;
+                    }
+                    if (action === "minus") {
+                        value -= 1;
+                    }
+
+                    value = Math.max(min, Math.min(max, value));
+                    input.value = value;
+                });
+            });
+        });
+    }
+
+    function initOrderDeliveryNotifier() {
+        const match = window.location.pathname.match(/\/track_order\/(\d+)/);
+        if (!match) {
+            return;
+        }
+
+        const orderId = match[1];
+        fetch(`/api/order/check/${orderId}`)
+            .then((response) => response.json())
+            .then((data) => {
+                if (data.status === "Delivered") {
+                    showDeliveredToast(orderId);
+                }
+            })
+            .catch(() => {
+                // Do not surface noisy errors for status polling.
+            });
+    }
+
+    function showDeliveredToast(orderId) {
+        const toast = document.createElement("div");
+        toast.className = "alert alert-success";
+        toast.style.position = "fixed";
+        toast.style.top = "16px";
+        toast.style.right = "16px";
+        toast.style.width = "min(420px, calc(100% - 32px))";
+        toast.style.zIndex = "10000";
+        toast.style.boxShadow = "0 16px 30px rgba(15, 23, 42, 0.18)";
+        toast.innerHTML = `<strong>Order Delivered</strong><div>Your order #${orderId} has arrived. Enjoy your meal.</div>`;
+        document.body.appendChild(toast);
+        setTimeout(() => toast.remove(), 7000);
     }
 
     if (paymentMethod) {
-        paymentMethod.addEventListener('change', toggleUpiPaymentDetails);
-        toggleUpiPaymentDetails();
+        paymentMethod.addEventListener("change", togglePaymentMethodDetails);
+        togglePaymentMethodDetails();
     }
 
-    // Confirmation dialogs for delete actions
-    const confirms = document.querySelectorAll('a[onclick]');
-    confirms.forEach((link) => {
-        if (link.getAttribute('onclick')?.includes('confirm')) {
-            link.addEventListener('click', function (event) {
-                const ok = confirm('Are you sure you want to continue?');
-                if (!ok) event.preventDefault();
-            });
-        }
-    });
-    
-    // Add animations to elements as they come into view
-    const animateOnScroll = document.querySelectorAll('.fade-in, .slide-in, .slide-up');
-    if ('IntersectionObserver' in window) {
-        const observer = new IntersectionObserver((entries) => {
-            entries.forEach(entry => {
-                if (entry.isIntersecting) {
-                    entry.target.style.opacity = '1';
-                    observer.unobserve(entry.target);
-                }
-            });
-        }, { threshold: 0.1 });
-        
-        animateOnScroll.forEach(el => observer.observe(el));
+    if (themeToggle) {
+        themeToggle.addEventListener("click", toggleTheme);
     }
-    
-    // Smooth scroll behavior for navigation links
-    document.querySelectorAll('a[href^="#"]').forEach(anchor => {
-        anchor.addEventListener('click', function (e) {
-            const href = this.getAttribute('href');
-            if (href !== '#') {
-                e.preventDefault();
-                const target = document.querySelector(href);
-                if (target) {
-                    target.scrollIntoView({ behavior: 'smooth' });
-                }
-            }
-        });
-    });
-    
-    // Add hover effects to buttons
-    const buttons = document.querySelectorAll('.btn');
-    buttons.forEach(btn => {
-        btn.addEventListener('mouseenter', function() {
-            this.style.transform = 'translateY(-2px)';
-        });
-        btn.addEventListener('mouseleave', function() {
-            this.style.transform = 'translateY(0)';
-        });
-    });
-    
-    // Add cart animation when item is added
-    const addToCartButtons = document.querySelectorAll('a[href*="add_to_cart"]');
-    addToCartButtons.forEach(btn => {
-        btn.addEventListener('click', function() {
-            const cartBadge = document.querySelector('.badge-primary');
-            if (cartBadge) {
-                cartBadge.classList.add('bounce');
-                setTimeout(() => cartBadge.classList.remove('bounce'), 600);
-            }
-        });
-    });
-    
-    // Delivery notification popup for delivered orders
-    function checkDeliveryStatus() {
-        const orderIdMatch = window.location.pathname.match(/\/track_order\/(\d+)/);
-        if (orderIdMatch) {
-            const orderId = orderIdMatch[1];
-            fetch(`/api/order/check/${orderId}`)
-                .then(response => response.json())
-                .then(data => {
-                    if (data.status === 'Delivered') {
-                        showDeliveryNotification(orderId);
-                    }
-                })
-                .catch(err => console.log('Error checking delivery status:', err));
-        }
-    }
-    
-    // Show delivery notification popup
-    function showDeliveryNotification(orderId) {
-        const notification = document.createElement('div');
-        notification.className = 'alert alert-success alert-dismissible fade show bounce-in';
-        notification.setAttribute('role', 'alert');
-        notification.style.cssText = `
-            position: fixed;
-            top: 20px;
-            right: 20px;
-            width: 400px;
-            z-index: 10000;
-            box-shadow: 0 4px 6px rgba(0,0,0,0.2);
-            max-width: calc(100% - 40px);
-        `;
-        
-        notification.innerHTML = `
-            <div style="animation: slideInRight 0.5s ease;">
-                <h4 class="alert-heading">🎉 Order Delivered!</h4>
-                <p>Your order #${orderId} has been delivered successfully!</p>
-                <hr>
-                <p class="mb-0">Enjoy your delicious food! 😋</p>
-                <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
-            </div>
-        `;
-        
-        document.body.appendChild(notification);
-        
-        // Auto-remove after 8 seconds
-        setTimeout(() => {
-            notification.remove();
-        }, 8000);
-    }
-    
-    // Check delivery status on track order page
-    if (window.location.pathname.includes('/track_order/')) {
-        checkDeliveryStatus();
-    }
-    
-    // Format currency input
-    const priceInputs = document.querySelectorAll('input[type="number"][step="0.01"]');
-    priceInputs.forEach(input => {
-        input.addEventListener('blur', function() {
-            const value = parseFloat(this.value);
-            if (!isNaN(value)) {
-                this.value = value.toFixed(2);
-            }
-        });
-    });
-    
-    // Add loading animation to forms
-    const forms = document.querySelectorAll('form');
-    forms.forEach(form => {
-        form.addEventListener('submit', function() {
-            const submitBtn = this.querySelector('button[type="submit"]');
-            if (submitBtn) {
-                submitBtn.disabled = true;
-                submitBtn.innerHTML = '<span class="spinner-border spinner-border-sm me-2"></span>Processing...';
-            }
-        });
-    });
-    
-    // Quantity input validation
-    const qtyInputs = document.querySelectorAll('input[name^="qty_"]');
-    qtyInputs.forEach(input => {
-        input.addEventListener('change', function() {
-            const value = parseInt(this.value);
-            if (value < 1) {
-                this.value = 1;
-            } else if (value > 99) {
-                this.value = 99;
-            }
-        });
-    });
-    
-    // Add keyboard shortcut for search
-    document.addEventListener('keydown', function(event) {
-        if (event.ctrlKey && event.key === '/') {
-            event.preventDefault();
-            const searchInput = document.querySelector('input[name="q"]');
-            if (searchInput) {
-                searchInput.focus();
-                searchInput.select();
-            }
-        }
-    });
-    
-    // Add CSS for slideInRight animation
-    const style = document.createElement('style');
-    style.textContent = `
-        @keyframes slideInRight {
-            from {
-                transform: translateX(100%);
-                opacity: 0;
-            }
-            to {
-                transform: translateX(0);
-                opacity: 1;
-            }
-        }
-    `;
-    document.head.appendChild(style);
+
+    initTheme();
+    initScrollReveal();
+    initWishlistButtons();
+    initQtySteppers();
+    initOrderDeliveryNotifier();
 });

@@ -1,12 +1,17 @@
 {% extends "base.html" %}
 {% block content %}
-<div class="row">
-    <div class="col-lg-8">
-        <h2>Your Cart</h2>
+{% set delivery_fee = 39 if total > 0 else 0 %}
+{% set gst = total * 0.05 %}
+{% set grand_total = total + delivery_fee + gst %}
+
+<div class="row g-4">
+    <div class="col-lg-8 reveal-on-scroll">
+        <h2 class="section-title mb-1">Your Cart</h2>
+        <p class="section-subtitle">Review your items, apply a coupon, and continue to checkout.</p>
         {% if items %}
         <form method="post">
             <div class="table-responsive rounded-3 overflow-hidden shadow-sm">
-                <table class="table mb-0">
+                <table class="table mb-0 cart-table">
                     <thead class="table-light">
                         <tr>
                             <th>Item</th>
@@ -18,11 +23,15 @@
                     </thead>
                     <tbody>
                         {% for item in items %}
-                        <tr class="fade-in">
+                        <tr>
                             <td>{{ item.food.name }}</td>
                             <td>₹{{ "%.2f" | format(item.food.price) }}</td>
                             <td>
-                                <input type="number" min="1" name="qty_{{ item.food.id }}" value="{{ item.qty }}" class="form-control form-control-sm qty-input" style="width: 80px;" />
+                                <div class="qty-stepper">
+                                    <button type="button" class="qty-btn" data-action="minus">-</button>
+                                    <input type="number" min="1" max="99" name="qty_{{ item.food.id }}" value="{{ item.qty }}" class="form-control form-control-sm qty-input" />
+                                    <button type="button" class="qty-btn" data-action="plus">+</button>
+                                </div>
                             </td>
                             <td class="item-subtotal">₹{{ "%.2f" | format(item.subtotal) }}</td>
                             <td><a href="{{ url_for('remove_from_cart', food_id=item.food.id) }}" class="btn btn-outline-danger btn-sm">Remove</a></td>
@@ -31,34 +40,38 @@
                     </tbody>
                 </table>
             </div>
-            <div class="mt-3 d-flex justify-content-between align-items-center">
-                <button type="submit" class="btn btn-secondary" style="transition: all 0.3s;">Update Cart</button>
-                <a href="{{ url_for('checkout') }}" class="btn btn-primary" style="animation: pulse 2s infinite;">Proceed to Checkout</a>
+
+            <div class="coupon-box mt-3">
+                <label class="form-label mb-2">Coupon Code</label>
+                <div class="d-flex gap-2">
+                    <input type="text" class="form-control" placeholder="Enter coupon (e.g. FOOD20)" />
+                    <button type="button" class="btn btn-outline-dark">Apply</button>
+                </div>
+                <small class="text-muted">Coupon UI is enabled. Existing backend discount rules are still applied at checkout.</small>
+            </div>
+
+            <div class="mt-3 d-flex justify-content-between align-items-center flex-wrap gap-2">
+                <button type="submit" class="btn btn-secondary">Update Cart</button>
+                <a href="{{ url_for('checkout') }}" class="btn btn-primary">Proceed to Checkout</a>
             </div>
         </form>
         {% else %}
             <div class="alert alert-warning">Your cart is empty. Visit the <a href="{{ url_for('menu') }}">menu</a> to add items.</div>
         {% endif %}
     </div>
-    <div class="col-lg-4">
-        <div class="card shadow-sm bg-light">
+    <div class="col-lg-4 reveal-on-scroll">
+        <div class="card shadow-sm order-summary-card h-100">
             <div class="card-body">
                 <h5 class="card-title">Order Summary</h5>
-                <p class="text-muted">Total items: {{ items|length }}</p>
-                <h3 style="color: #007bff;">₹{{ "%.2f" | format(total) }}</h3>
-                <p class="small text-muted">Update quantities if needed, then checkout.</p>
+                <div class="summary-line"><span>Total items</span><strong>{{ items|length }}</strong></div>
+                <div class="summary-line"><span>Subtotal</span><strong>₹{{ "%.2f" | format(total) }}</strong></div>
+                <div class="summary-line"><span>Delivery fee</span><strong>₹{{ "%.2f" | format(delivery_fee) }}</strong></div>
+                <div class="summary-line"><span>GST (5%)</span><strong>₹{{ "%.2f" | format(gst) }}</strong></div>
+                <hr />
+                <div class="summary-line grand-total"><span>Grand Total</span><strong>₹{{ "%.2f" | format(grand_total) }}</strong></div>
+                <p class="small text-muted mt-2 mb-0">Taxes and fees are shown before checkout for transparency.</p>
             </div>
         </div>
     </div>
 </div>
-
-<script>
-    // Real-time subtotal calculation
-    const qtyInputs = document.querySelectorAll('.qty-input');
-    qtyInputs.forEach(input => {
-        input.addEventListener('change', function() {
-            // Form will be submitted with correct quantities
-        });
-    });
-</script>
 {% endblock %}

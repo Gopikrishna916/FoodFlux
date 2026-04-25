@@ -9,7 +9,7 @@
 </div>
 
 <div class="row g-3 mb-4">
-    <div class="col-md-4">
+    <div class="col-md-3">
         <div class="card shadow-sm border-0 bg-light h-100">
             <div class="card-body">
                 <div class="text-muted small">Assigned Orders</div>
@@ -17,7 +17,15 @@
             </div>
         </div>
     </div>
-    <div class="col-md-4">
+    <div class="col-md-3">
+        <div class="card shadow-sm border-0 bg-light h-100">
+            <div class="card-body">
+                <div class="text-muted small">Accepted Orders</div>
+                <div class="fs-3 fw-bold text-info">{{ delivery_stats.accepted_orders or 0 }}</div>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-3">
         <div class="card shadow-sm border-0 bg-light h-100">
             <div class="card-body">
                 <div class="text-muted small">Active Orders</div>
@@ -25,7 +33,7 @@
             </div>
         </div>
     </div>
-    <div class="col-md-4">
+    <div class="col-md-3">
         <div class="card shadow-sm border-0 bg-light h-100">
             <div class="card-body">
                 <div class="text-muted small">Delivered</div>

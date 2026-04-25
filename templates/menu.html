@@ -1,33 +1,37 @@
 {% extends "base.html" %}
 {% block content %}
-<div class="d-flex justify-content-between align-items-center mb-4 flex-wrap gap-2">
+<div class="d-flex justify-content-between align-items-center mb-4 flex-wrap gap-2 reveal-on-scroll">
     <div>
-        <h2>🍽️ Food Menu</h2>
-        <p class="text-muted">Browse by category and add delicious meals to your cart.</p>
+        <h2 class="section-title mb-1">Food Menu</h2>
+        <p class="section-subtitle mb-0">Browse by category and add delicious meals to your cart.</p>
     </div>
-    <form action="{{ url_for('menu') }}" method="get" class="d-flex gap-2 flex-wrap">
+    <form action="{{ url_for('menu') }}" method="get" class="d-flex gap-2 flex-wrap menu-search-form">
         <input type="text" name="q" class="form-control" placeholder="Search menu items" value="{{ search }}" />
-        <button class="btn btn-primary" style="transition: all 0.3s;">Search</button>
+        <button class="btn btn-primary">Search</button>
     </form>
 </div>
-<div class="mb-4">
-    <a href="{{ url_for('menu') }}" class="btn btn-outline-secondary btn-sm{% if not category %} active{% endif %}" style="transition: all 0.2s;">All</a>
-    <a href="{{ url_for('menu', category='Veg') }}" class="btn btn-outline-secondary btn-sm{% if category=='Veg' %} active{% endif %}" style="transition: all 0.2s;">Veg</a>
-    <a href="{{ url_for('menu', category='Non-Veg') }}" class="btn btn-outline-secondary btn-sm{% if category=='Non-Veg' %} active{% endif %}" style="transition: all 0.2s;">Non-Veg</a>
-    <a href="{{ url_for('menu', category='Fast Food') }}" class="btn btn-outline-secondary btn-sm{% if category=='Fast Food' %} active{% endif %}" style="transition: all 0.2s;">Fast Food</a>
-    <a href="{{ url_for('menu', category='Drinks') }}" class="btn btn-outline-secondary btn-sm{% if category=='Drinks' %} active{% endif %}" style="transition: all 0.2s;">Drinks</a>
+<div class="mb-4 d-flex flex-wrap gap-2 reveal-on-scroll">
+    <a href="{{ url_for('menu') }}" class="btn btn-outline-secondary btn-sm{% if not category %} active{% endif %}">All</a>
+    <a href="{{ url_for('menu', category='Veg') }}" class="btn btn-outline-secondary btn-sm{% if category=='Veg' %} active{% endif %}">Veg</a>
+    <a href="{{ url_for('menu', category='Non-Veg') }}" class="btn btn-outline-secondary btn-sm{% if category=='Non-Veg' %} active{% endif %}">Non-Veg</a>
+    <a href="{{ url_for('menu', category='Fast Food') }}" class="btn btn-outline-secondary btn-sm{% if category=='Fast Food' %} active{% endif %}">Fast Food</a>
+    <a href="{{ url_for('menu', category='Drinks') }}" class="btn btn-outline-secondary btn-sm{% if category=='Drinks' %} active{% endif %}">Drinks</a>
 </div>
 <div class="row g-4">
     {% if foods %}
         {% for food in foods %}
-        <div class="col-lg-3 col-md-4 col-sm-6 fade-in">
-            <div class="card h-100 shadow-sm food-card food-card-uniform" style="transition: all 0.3s; cursor: pointer;">
+        {% set is_non_veg = food.category in ['Non-Veg'] %}
+        {% set original_price = (food.price * 1.12) if food.price > 160 else None %}
+        <div class="col-lg-3 col-md-4 col-sm-6 reveal-on-scroll">
+            <div class="card h-100 shadow-sm food-card food-card-uniform">
                 <div class="food-image-container food-image-container-uniform">
                     {% if food.image.startswith('http') %}
-                    <img src="{{ food.image }}" class="card-img-top food-image" alt="{{ food.name }}" onerror="this.onerror=null;this.src='{{ url_for('static', filename='images/hero.svg') }}';" />
+                    <img src="{{ food.image }}" class="card-img-top food-image" alt="{{ food.name }}" loading="lazy" onerror="this.onerror=null;this.src='{{ url_for('static', filename='images/hero.svg') }}';" />
                     {% else %}
-                    <img src="{{ url_for('static', filename=food.image) }}" class="card-img-top food-image" alt="{{ food.name }}" onerror="this.onerror=null;this.src='{{ url_for('static', filename='images/hero.svg') }}';" />
+                    <img src="{{ url_for('static', filename=food.image) }}" class="card-img-top food-image" alt="{{ food.name }}" loading="lazy" onerror="this.onerror=null;this.src='{{ url_for('static', filename='images/hero.svg') }}';" />
                     {% endif %}
+                    <button class="wishlist-btn" type="button" data-item="{{ food.id }}" aria-label="Toggle wishlist"><i class="bi bi-heart"></i></button>
+                    <span class="diet-tag {{ 'non-veg' if is_non_veg else 'veg' }}">{{ 'Non-Veg' if is_non_veg else 'Veg' }}</span>
                 </div>
                 <div class="card-body">
                     <span class="badge bg-secondary mb-2">{{ food.category }}</span>
@@ -42,8 +46,13 @@
                     <p class="card-text small text-muted food-description">{{ food.description }}</p>
                 </div>
                 <div class="card-footer bg-white border-top-0 d-flex justify-content-between align-items-center">
-                    <span class="fw-bold text-primary" style="font-size: 1.2rem;">₹{{ "%.2f" | format(food.price) }}</span>
-                    <a href="{{ url_for('add_to_cart', food_id=food.id) }}" class="btn btn-primary btn-sm" style="transition: all 0.2s;">Add to Cart</a>
+                    <div>
+                        <span class="fw-bold text-primary">₹{{ "%.2f" | format(food.price) }}</span>
+                        {% if original_price %}
+                        <span class="old-price">₹{{ "%.2f" | format(original_price) }}</span>
+                        {% endif %}
+                    </div>
+                    <a href="{{ url_for('add_to_cart', food_id=food.id) }}" class="btn btn-primary btn-sm">Add to Cart</a>
                 </div>
             </div>
         </div>
@@ -54,15 +63,4 @@
         </div>
     {% endif %}
 </div>
-
-<style>
-    .food-card:hover {
-        transform: translateY(-5px);
-        box-shadow: 0 8px 16px rgba(0,0,0,0.15) !important;
-    }
-    
-    .food-card:hover .food-image {
-        transform: scale(1.05);
-    }
-</style>
 {% endblock %}

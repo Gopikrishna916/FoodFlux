@@ -1,4 +1,5 @@
 ﻿import os
+import re
 import shutil
 import sqlite3
 import base64
@@ -126,8 +127,10 @@ def init_db():
             address TEXT NOT NULL,
             phone TEXT NOT NULL,
             payment TEXT NOT NULL,
+            payment_details TEXT,
             status TEXT NOT NULL,
             delivery_person TEXT,
+            delivery_accepted INTEGER NOT NULL DEFAULT 0,
             estimated_delivery_time TEXT,
             auto_delivered_at TEXT,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
@@ -210,6 +213,10 @@ def ensure_orders_schema(db):
         db.execute("ALTER TABLE orders ADD COLUMN customer_name TEXT NOT NULL DEFAULT ''")
     if "delivery_person" not in order_columns:
         db.execute("ALTER TABLE orders ADD COLUMN delivery_person TEXT")
+    if "payment_details" not in order_columns:
+        db.execute("ALTER TABLE orders ADD COLUMN payment_details TEXT")
+    if "delivery_accepted" not in order_columns:
+        db.execute("ALTER TABLE orders ADD COLUMN delivery_accepted INTEGER NOT NULL DEFAULT 0")
     if "auto_delivered_at" not in order_columns:
         db.execute("ALTER TABLE orders ADD COLUMN auto_delivered_at TEXT")
 
@@ -227,6 +234,14 @@ def ensure_orders_schema(db):
         UPDATE orders
         SET auto_delivered_at = datetime(created_at, '+30 minutes')
         WHERE auto_delivered_at IS NULL OR TRIM(auto_delivered_at) = ''
+        '''
+    )
+    db.execute(
+        '''
+        UPDATE orders
+        SET delivery_accepted = 1
+        WHERE delivery_person IS NOT NULL
+          AND TRIM(delivery_person) != ''
         '''
     )
 
@@ -250,7 +265,25 @@ def update_due_delivery_statuses():
         ''',
         (current_time,),
     )
+    purge_delivered_orders(db)
     db.commit()
+
+
+def purge_delivered_orders(db):
+    """Permanently remove delivered orders and their dependent rows."""
+    db.execute(
+        '''
+        DELETE FROM ratings
+        WHERE order_id IN (SELECT id FROM orders WHERE status = 'Delivered')
+        '''
+    )
+    db.execute(
+        '''
+        DELETE FROM order_items
+        WHERE order_id IN (SELECT id FROM orders WHERE status = 'Delivered')
+        '''
+    )
+    db.execute("DELETE FROM orders WHERE status = 'Delivered'")
 
 
 def normalize_db_image_paths(db):
@@ -391,6 +424,67 @@ def calculate_estimated_delivery():
     current_time = datetime.now()
     delivery_time = current_time + timedelta(minutes=30)
     return delivery_time
+
+
+def validate_payment_and_details(form, payment_method):
+    """Validate payment inputs for each method and return sanitized summary."""
+    method = (payment_method or "").strip()
+
+    if method == "Cash on Delivery":
+        cod_confirm = form.get("cod_confirm")
+        if cod_confirm != "yes":
+            return None, "Please confirm Cash on Delivery before placing order."
+        return "Cash on Delivery confirmed", None
+
+    if method == "UPI":
+        upi_reference = (form.get("upi_transaction_id") or "").strip()
+        if len(upi_reference) < 6:
+            return None, "Please enter a valid UPI transaction/reference ID."
+        return f"UPI reference: {upi_reference}", None
+
+    if method == "Debit/Credit Card":
+        card_number = re.sub(r"\s+", "", (form.get("card_number") or "").strip())
+        card_holder = (form.get("card_holder") or "").strip()
+        card_expiry = (form.get("card_expiry") or "").strip()
+        card_cvv = (form.get("card_cvv") or "").strip()
+
+        if not (card_number.isdigit() and 13 <= len(card_number) <= 19):
+            return None, "Please enter a valid card number."
+        if len(card_holder) < 2:
+            return None, "Please enter the card holder name."
+        if not re.match(r"^(0[1-9]|1[0-2])/[0-9]{2}$", card_expiry):
+            return None, "Card expiry must be in MM/YY format."
+        if not (card_cvv.isdigit() and len(card_cvv) in (3, 4)):
+            return None, "Please enter a valid card CVV."
+
+        return f"Card payment (ending {card_number[-4:]})", None
+
+    if method == "Net Banking":
+        bank_name = (form.get("bank_name") or "").strip()
+        account_holder = (form.get("netbanking_account_holder") or "").strip()
+        account_last4 = (form.get("netbanking_account_last4") or "").strip()
+
+        if len(bank_name) < 2:
+            return None, "Please select or enter your bank name."
+        if len(account_holder) < 2:
+            return None, "Please enter account holder name for net banking."
+        if not (account_last4.isdigit() and len(account_last4) == 4):
+            return None, "Please enter last 4 digits of the bank account."
+
+        return f"Net banking: {bank_name} (A/C ending {account_last4})", None
+
+    if method == "Wallet":
+        wallet_provider = (form.get("wallet_provider") or "").strip()
+        wallet_mobile = (form.get("wallet_mobile") or "").strip()
+
+        if len(wallet_provider) < 2:
+            return None, "Please select a wallet provider."
+        if not re.match(r"^[0-9]{10}$", wallet_mobile):
+            return None, "Wallet mobile number must be exactly 10 digits."
+
+        return f"Wallet: {wallet_provider} ({wallet_mobile})", None
+
+    return None, "Invalid payment method selected."
 
 
 with app.app_context():
@@ -676,9 +770,6 @@ def checkout():
     discount_amount, discount_percentage = calculate_discount(total)
     final_total = total - discount_amount
     
-    # Generate QR code for UPI payment
-    qr_code = generate_upi_qr(final_total)
-    
     # Calculate estimated delivery time
     estimated_delivery = calculate_estimated_delivery()
 
@@ -692,14 +783,19 @@ def checkout():
             flash("All fields are required.", "danger")
             return redirect(url_for("checkout"))
 
+        payment_details, payment_error = validate_payment_and_details(request.form, payment)
+        if payment_error:
+            flash(payment_error, "danger")
+            return redirect(url_for("checkout"))
+
         estimated_delivery = calculate_estimated_delivery()
         auto_delivered_at = datetime.now() + timedelta(minutes=30)
 
         db = get_db()
         cursor = db.execute(
             '''
-            INSERT INTO orders (user_id, customer_name, total, original_total, discount, discount_percentage, address, phone, payment, status, estimated_delivery_time, auto_delivered_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            INSERT INTO orders (user_id, customer_name, total, original_total, discount, discount_percentage, address, phone, payment, payment_details, status, estimated_delivery_time, auto_delivered_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ''',
             (
                 session["user_id"],
@@ -711,6 +807,7 @@ def checkout():
                 address,
                 phone,
                 payment,
+                payment_details,
                 "Preparing",
                 estimated_delivery.strftime("%Y-%m-%d %H:%M:%S"),
                 auto_delivered_at.strftime("%Y-%m-%d %H:%M:%S"),
@@ -719,7 +816,7 @@ def checkout():
         order_id = cursor.lastrowid
         assigned_delivery_person = allocate_delivery_person(order_id)
         db.execute(
-            "UPDATE orders SET delivery_person = ? WHERE id = ?",
+            "UPDATE orders SET delivery_person = ?, delivery_accepted = 1 WHERE id = ?",
             (assigned_delivery_person, order_id),
         )
 
@@ -741,7 +838,6 @@ def checkout():
         discount_amount=discount_amount,
         discount_percentage=discount_percentage,
         final_total=final_total,
-        qr_code=qr_code,
         estimated_delivery=estimated_delivery,
         customer_name=session.get("user_name", ""),
     )
@@ -938,6 +1034,7 @@ def admin_orders():
             END AS delivery_boy_status
         FROM orders o
         LEFT JOIN users u ON u.id = o.user_id
+        WHERE o.status != 'Delivered'
         ORDER BY o.created_at DESC
         '''
     )
@@ -1094,6 +1191,7 @@ def delivery_dashboard():
         '''
         SELECT
             COUNT(*) AS total_assigned,
+            SUM(CASE WHEN delivery_accepted = 1 THEN 1 ELSE 0 END) AS accepted_orders,
             SUM(CASE WHEN status = 'Delivered' THEN 1 ELSE 0 END) AS delivered_orders,
             SUM(CASE WHEN status != 'Delivered' THEN 1 ELSE 0 END) AS active_orders
         FROM orders

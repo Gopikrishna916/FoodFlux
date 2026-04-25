@@ -1,47 +1,112 @@
 {% extends "base.html" %}
 {% block content %}
-<div class="hero-section text-center text-white rounded-4 overflow-hidden shadow-sm position-relative mb-5" style="animation: slideInDown 0.8s ease;">
-    <img src="{{ url_for('static', filename='images/bbq_chicken_pizza.png') }}" alt="Food delivery hero" class="hero-image" />
+<section class="hero-section reveal-on-scroll">
+    <img src="{{ url_for('static', filename='images/bbq_chicken_pizza.png') }}" alt="Food delivery hero" class="hero-image" loading="lazy" />
     <div class="hero-overlay"></div>
-    <div class="hero-content">
-        <h1 class="display-5 fw-bold mt-3" style="animation: fadeInUp 1s ease 0.2s backwards;">Hot meals. Lightning delivery. Delight in every bite.</h1>
-        <p class="lead mb-4" style="animation: fadeInUp 1s ease 0.4s backwards;">Discover chef-curated favorites, track orders in real time, and enjoy a premium food experience from FoodFlux.</p>
-        <div class="d-flex justify-content-center flex-wrap gap-2" style="animation: fadeInUp 1s ease 0.6s backwards; animation-fill-mode: backwards;">
-            <a href="{{ url_for('menu') }}" class="btn btn-primary btn-lg">Explore Menu</a>
-            <a href="{{ url_for('register') }}" class="btn btn-outline-light btn-lg">Join FoodFlux</a>
+    <div class="hero-glow hero-glow-left"></div>
+    <div class="hero-glow hero-glow-right"></div>
+    <div class="hero-content text-center text-white">
+        <h1 class="hero-title">Delicious Food Delivered Fast</h1>
+        <p class="hero-subtitle">Fresh meals from top restaurants near you</p>
+        <div class="d-flex justify-content-center flex-wrap gap-2">
+            <a href="{{ url_for('menu') }}" class="btn btn-primary btn-lg">Order Now</a>
+            <a href="{{ url_for('menu') }}" class="btn btn-outline-light btn-lg">Explore Menu</a>
         </div>
     </div>
-</div>
+    <div class="floating-food-card floating-card-1">
+        <span>Hot Deals</span>
+        <strong>Up to 25% Off</strong>
+    </div>
+    <div class="floating-food-card floating-card-2">
+        <span>Fast Delivery</span>
+        <strong>30 mins ETA</strong>
+    </div>
+</section>
 
-<!-- Featured Food Slider -->
-<section class="mb-5">
-    <h2 class="mb-4">🎯 Special Offers & Featured Items</h2>
-    <div id="foodCarousel" class="carousel slide shadow-sm rounded-4" data-bs-ride="carousel">
+<section class="mb-5 reveal-on-scroll">
+    <div class="section-head d-flex justify-content-between align-items-center flex-wrap gap-2 mb-3">
+        <div>
+            <h2 class="section-title">Featured Categories</h2>
+            <p class="section-subtitle">Choose by craving and discover your next favorite meal.</p>
+        </div>
+    </div>
+    <div class="row g-3">
+        <div class="col-6 col-md-4 col-lg-2"><a href="{{ url_for('menu', q='pizza') }}" class="category-pill">Pizza</a></div>
+        <div class="col-6 col-md-4 col-lg-2"><a href="{{ url_for('menu', q='burger') }}" class="category-pill">Burgers</a></div>
+        <div class="col-6 col-md-4 col-lg-2"><a href="{{ url_for('menu', q='South Indian') }}" class="category-pill">South Indian</a></div>
+        <div class="col-6 col-md-4 col-lg-2"><a href="{{ url_for('menu', q='Chinese') }}" class="category-pill">Chinese</a></div>
+        <div class="col-6 col-md-4 col-lg-2"><a href="{{ url_for('menu', q='Desserts') }}" class="category-pill">Desserts</a></div>
+        <div class="col-6 col-md-4 col-lg-2"><a href="{{ url_for('menu', q='Healthy') }}" class="category-pill">Healthy Food</a></div>
+    </div>
+</section>
+
+<section class="mb-5 reveal-on-scroll">
+    <div class="section-head d-flex justify-content-between align-items-center flex-wrap gap-2 mb-3">
+        <div>
+            <h2 class="section-title">Popular Restaurants</h2>
+            <p class="section-subtitle">Top-rated kitchens delivering fresh and fast.</p>
+        </div>
+    </div>
+    <div class="row g-3">
+        <div class="col-md-6 col-lg-4">
+            <article class="restaurant-card">
+                <img src="{{ url_for('static', filename='images/margherita_pizza.png') }}" alt="Urban Pizza Co" loading="lazy" />
+                <div class="restaurant-content">
+                    <div class="offer-badge">20% OFF</div>
+                    <h3>Urban Pizza Co</h3>
+                    <p>4.7 • 30 min • ₹500 for two</p>
+                </div>
+            </article>
+        </div>
+        <div class="col-md-6 col-lg-4">
+            <article class="restaurant-card">
+                <img src="{{ url_for('static', filename='images/chicken_burger.jpeg') }}" alt="Burger Block" loading="lazy" />
+                <div class="restaurant-content">
+                    <div class="offer-badge">FREE DELIVERY</div>
+                    <h3>Burger Block</h3>
+                    <p>4.5 • 25 min • ₹450 for two</p>
+                </div>
+            </article>
+        </div>
+        <div class="col-md-6 col-lg-4">
+            <article class="restaurant-card">
+                <img src="{{ url_for('static', filename='images/fish_curry.png') }}" alt="Spice Route" loading="lazy" />
+                <div class="restaurant-content">
+                    <div class="offer-badge">BUY 1 GET 1</div>
+                    <h3>Spice Route</h3>
+                    <p>4.8 • 35 min • ₹600 for two</p>
+                </div>
+            </article>
+        </div>
+    </div>
+</section>
+
+<section class="mb-5 reveal-on-scroll">
+    <div class="section-head d-flex justify-content-between align-items-center mb-3 flex-wrap gap-2">
+        <div>
+            <h2 class="section-title">Trending Dishes</h2>
+            <p class="section-subtitle">Most ordered picks this week.</p>
+        </div>
+    </div>
+    <div id="foodCarousel" class="carousel slide premium-carousel" data-bs-ride="carousel">
         <div class="carousel-inner">
             {% for food in foods %}
-            <div class="carousel-item{% if loop.first %} active{% endif %}" style="background-color: #f8f9fa; padding: 3rem 0;">
-                <div class="container">
-                    <div class="row align-items-center g-4">
-                        <div class="col-md-6 text-center">
-                            <div style="height: 300px; display: flex; align-items: center; justify-content: center;">
-                                {% if food.image.startswith('http') %}
-                                <img src="{{ food.image }}" alt="{{ food.name }}" onerror="this.onerror=null;this.src='{{ url_for('static', filename='images/hero.svg') }}';" style="max-height: 100%; max-width: 100%; object-fit: contain; animation: bounce 2s infinite;" />
-                                {% else %}
-                                <img src="{{ url_for('static', filename=food.image) }}" alt="{{ food.name }}" onerror="this.onerror=null;this.src='{{ url_for('static', filename='images/hero.svg') }}';" style="max-height: 100%; max-width: 100%; object-fit: contain; animation: bounce 2s infinite;" />
-                                {% endif %}
-                            </div>
-                        </div>
-                        <div class="col-md-6">
-                            <span class="badge bg-danger mb-3" style="font-size: 0.9rem; padding: 0.5rem 1rem;">FEATURED</span>
-                            <h3 class="mb-3">{{ food.name }}</h3>
-                            <p class="lead text-muted mb-3">{{ food.description }}</p>
-                            <p><strong>Category:</strong> <span class="badge bg-secondary">{{ food.category }}</span></p>
-                            <div class="d-flex align-items-center gap-3 mt-4">
-                                <span style="font-size: 2rem; color: #28a745; font-weight: bold;">₹{{ "%.2f" | format(food.price) }}</span>
-                                <a href="{{ url_for('add_to_cart', food_id=food.id) }}" class="btn btn-primary btn-lg" style="animation: pulse 2s infinite;">
-                                    🛒 Add to Cart
-                                </a>
-                            </div>
+            <div class="carousel-item{% if loop.first %} active{% endif %}">
+                <div class="trending-slide row align-items-center g-4">
+                    <div class="col-md-5 text-center">
+                        {% if food.image.startswith('http') %}
+                        <img src="{{ food.image }}" alt="{{ food.name }}" class="trending-slide-image" loading="lazy" onerror="this.onerror=null;this.src='{{ url_for('static', filename='images/hero.svg') }}';" />
+                        {% else %}
+                        <img src="{{ url_for('static', filename=food.image) }}" alt="{{ food.name }}" class="trending-slide-image" loading="lazy" onerror="this.onerror=null;this.src='{{ url_for('static', filename='images/hero.svg') }}';" />
+                        {% endif %}
+                    </div>
+                    <div class="col-md-7">
+                        <span class="badge text-bg-dark mb-2">TRENDING</span>
+                        <h3 class="mb-2">{{ food.name }}</h3>
+                        <p class="text-muted mb-3">{{ food.description }}</p>
+                        <div class="d-flex gap-2 align-items-center flex-wrap">
+                            <span class="price-main">₹{{ "%.2f" | format(food.price) }}</span>
+                            <a href="{{ url_for('add_to_cart', food_id=food.id) }}" class="btn btn-primary">Add to Cart</a>
                         </div>
                     </div>
                 </div>
@@ -49,54 +114,49 @@
             {% endfor %}
         </div>
         <button class="carousel-control-prev" type="button" data-bs-target="#foodCarousel" data-bs-slide="prev">
-            <span class="carousel-control-prev-icon bg-dark rounded-circle p-2" aria-hidden="true"></span>
+            <span class="carousel-control-prev-icon" aria-hidden="true"></span>
         </button>
         <button class="carousel-control-next" type="button" data-bs-target="#foodCarousel" data-bs-slide="next">
-            <span class="carousel-control-next-icon bg-dark rounded-circle p-2" aria-hidden="true"></span>
+            <span class="carousel-control-next-icon" aria-hidden="true"></span>
         </button>
     </div>
 </section>
 
-<section class="mb-5">
-    <div class="row align-items-center gy-4">
-        <div class="col-md-6">
-            <h2 style="animation: slideInLeft 0.8s ease;">Search your favorite food</h2>
-            <p style="animation: slideInLeft 0.8s ease 0.1s backwards;">Type the name of a dish or browse by category to find meals you love.</p>
-            <form action="{{ url_for('menu') }}" method="get" class="d-flex gap-2 flex-wrap" style="animation: slideInLeft 0.8s ease 0.2s backwards;">
-                <input type="text" name="q" class="form-control" placeholder="Search food items" value="{{ search }}" />
-                <button class="btn btn-primary" style="transition: all 0.3s;">Search</button>
-            </form>
-        </div>
-        <div class="col-md-6">
-            <div class="row g-3">
-                <div class="col-6"><div class="feature-card slide-in">🥗 Veg Delights</div></div>
-                <div class="col-6"><div class="feature-card slide-in" style="animation-delay: 0.1s;">⚡ Fast Food</div></div>
-                <div class="col-6"><div class="feature-card slide-in" style="animation-delay: 0.2s;">🥤 Drinks & Shakes</div></div>
-                <div class="col-6"><div class="feature-card slide-in" style="animation-delay: 0.3s;">🍗 Non-Veg Specials</div></div>
-            </div>
-        </div>
+<section class="mb-5 reveal-on-scroll">
+    <div class="section-head mb-3">
+        <h2 class="section-title">Why Choose FoodFlux</h2>
+    </div>
+    <div class="row g-3">
+        <div class="col-md-6 col-lg-3"><div class="value-card"><i class="bi bi-lightning-charge"></i><h4>Fast Delivery</h4><p>Optimized dispatch for quick doorstep delivery.</p></div></div>
+        <div class="col-md-6 col-lg-3"><div class="value-card"><i class="bi bi-flower1"></i><h4>Fresh Ingredients</h4><p>Every dish is made with quality ingredients.</p></div></div>
+        <div class="col-md-6 col-lg-3"><div class="value-card"><i class="bi bi-piggy-bank"></i><h4>Best Prices</h4><p>Transparent pricing and daily value deals.</p></div></div>
+        <div class="col-md-6 col-lg-3"><div class="value-card"><i class="bi bi-geo-alt"></i><h4>Live Tracking</h4><p>Track your order from kitchen to doorstep.</p></div></div>
     </div>
 </section>
 
-<section class="mb-5">
-    <div class="d-flex justify-content-between align-items-center mb-4 flex-wrap gap-2">
+<section class="mb-5 reveal-on-scroll">
+    <div class="section-head d-flex justify-content-between align-items-center mb-3 flex-wrap gap-2">
         <div>
-            <h2>🏆 Popular dishes</h2>
-            <p class="text-muted">Our most ordered dishes are ready to enjoy.</p>
+            <h2 class="section-title">Popular Dishes</h2>
+            <p class="section-subtitle">Rated and loved by returning customers.</p>
         </div>
-        <a href="{{ url_for('menu') }}" class="btn btn-outline-primary" style="transition: all 0.3s;">View Full Menu</a>
+        <a href="{{ url_for('menu') }}" class="btn btn-outline-primary">View Full Menu</a>
     </div>
 
     <div class="row g-4">
         {% for food in foods %}
-        <div class="col-lg-3 col-md-4 col-sm-6 fade-in">
-            <div class="card h-100 shadow-sm food-card food-card-uniform" style="transition: all 0.3s; cursor: pointer;">
+        {% set is_non_veg = food.category in ['Non-Veg'] %}
+        {% set original_price = (food.price * 1.12) if food.price > 160 else None %}
+        <div class="col-lg-3 col-md-4 col-sm-6">
+            <article class="card food-card h-100">
                 <div class="food-image-container food-image-container-uniform">
                     {% if food.image.startswith('http') %}
-                    <img src="{{ food.image }}" class="card-img-top food-image" alt="{{ food.name }}" onerror="this.onerror=null;this.src='{{ url_for('static', filename='images/hero.svg') }}';" />
+                    <img src="{{ food.image }}" class="card-img-top food-image" alt="{{ food.name }}" loading="lazy" onerror="this.onerror=null;this.src='{{ url_for('static', filename='images/hero.svg') }}';" />
                     {% else %}
-                    <img src="{{ url_for('static', filename=food.image) }}" class="card-img-top food-image" alt="{{ food.name }}" onerror="this.onerror=null;this.src='{{ url_for('static', filename='images/hero.svg') }}';" />
+                    <img src="{{ url_for('static', filename=food.image) }}" class="card-img-top food-image" alt="{{ food.name }}" loading="lazy" onerror="this.onerror=null;this.src='{{ url_for('static', filename='images/hero.svg') }}';" />
                     {% endif %}
+                    <button class="wishlist-btn" type="button" data-item="{{ food.id }}" aria-label="Toggle wishlist"><i class="bi bi-heart"></i></button>
+                    <span class="diet-tag {{ 'non-veg' if is_non_veg else 'veg' }}">{{ 'Non-Veg' if is_non_veg else 'Veg' }}</span>
                 </div>
                 <div class="card-body">
                     <h5 class="card-title">{{ food.name }}</h5>
@@ -105,29 +165,50 @@
                         {% for i in range(1, 6) %}
                             {% if i <= rounded_rating %}★{% else %}☆{% endif %}
                         {% endfor %}
-                        <span class="text-muted">({{ "%.1f" | format(food.avg_rating) }} / 5, {{ food.rating_count }} ratings)</span>
+                        <span class="text-muted ms-1">{{ "%.1f" | format(food.avg_rating) }} ({{ food.rating_count }})</span>
                     </p>
-                    <p class="card-text text-muted">{{ food.category }}</p>
-                    <p class="card-text small food-description">{{ food.description }}</p>
+                    <p class="card-text small text-muted food-description">{{ food.description }}</p>
                 </div>
-                <div class="card-footer bg-white border-top-0 d-flex justify-content-between align-items-center">
-                    <span class="fw-bold text-primary" style="font-size: 1.1rem;">₹{{ "%.2f" | format(food.price) }}</span>
-                    <a href="{{ url_for('add_to_cart', food_id=food.id) }}" class="btn btn-sm btn-primary" style="transition: all 0.2s;">Add</a>
+                <div class="card-footer bg-transparent border-0 d-flex justify-content-between align-items-center">
+                    <div>
+                        <span class="fw-bold text-primary">₹{{ "%.2f" | format(food.price) }}</span>
+                        {% if original_price %}
+                        <span class="old-price">₹{{ "%.2f" | format(original_price) }}</span>
+                        {% endif %}
+                    </div>
+                    <a href="{{ url_for('add_to_cart', food_id=food.id) }}" class="btn btn-sm btn-primary">Add</a>
                 </div>
-            </div>
+            </article>
         </div>
         {% endfor %}
     </div>
 </section>
 
-<style>
-    .food-card:hover {
-        transform: translateY(-5px);
-        box-shadow: 0 8px 16px rgba(0,0,0,0.15) !important;
-    }
-    
-    .food-card:hover .food-image {
-        transform: scale(1.05);
-    }
-</style>
+<section class="mb-4 reveal-on-scroll">
+    <div class="section-head mb-3 d-flex justify-content-between align-items-center flex-wrap gap-2">
+        <h2 class="section-title">Customer Reviews</h2>
+    </div>
+    <div id="reviewCarousel" class="carousel slide" data-bs-ride="carousel">
+        <div class="carousel-inner">
+            <div class="carousel-item active">
+                <div class="review-card">
+                    <p>"Food arrived hot in under 30 minutes. The checkout flow is super smooth."</p>
+                    <h5>Priya M.</h5>
+                </div>
+            </div>
+            <div class="carousel-item">
+                <div class="review-card">
+                    <p>"The dish quality and pricing are excellent. FoodFlux feels premium and fast."</p>
+                    <h5>Arjun R.</h5>
+                </div>
+            </div>
+            <div class="carousel-item">
+                <div class="review-card">
+                    <p>"Live tracking and clean UI made ordering effortless. Highly recommended."</p>
+                    <h5>Shreya K.</h5>
+                </div>
+            </div>
+        </div>
+    </div>
+</section>
 {% endblock %}
