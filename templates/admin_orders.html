@@ -6,11 +6,11 @@
             <h2>Customer Orders</h2>
             <p class="text-muted mb-0">Review and manage live order and delivery status.</p>
         </div>
-        <div class="small text-muted">Auto refresh: every 10 seconds</div>
+        <div class="small text-muted">Live updates enabled</div>
     </div>
 </div>
 <div class="table-responsive shadow-sm rounded-3 overflow-hidden">
-    <table class="table table-hover mb-0">
+    <table class="table table-hover mb-0" id="managerOrdersTable">
         <thead class="table-light">
             <tr>
                 <th>Order ID</th>
@@ -27,19 +27,19 @@
         </thead>
         <tbody>
             {% for order in orders %}
-            <tr>
+            <tr data-order-id="{{ order.id }}">
                 <td>{{ order.id }}</td>
                 <td>{{ order.customer_name }}<br><small>{{ order.customer_email }}</small></td>
                 <td>₹{{ "%.2f" | format(order.total) }}</td>
                 <td>{{ order.payment }}</td>
                 <td>
-                    <span class="badge {% if order.status == 'Delivered' %}bg-success{% elif order.status == 'Out for Delivery' %}bg-primary{% elif order.status == 'Ready' %}bg-info text-dark{% else %}bg-warning text-dark{% endif %}">
+                    <span class="badge order-status-badge {% if order.status == 'Delivered' %}bg-success{% elif order.status in ['On the Way', 'Picked Up'] %}bg-primary{% elif order.status in ['Ready for Pickup', 'Order Accepted', 'Rider Assigned'] %}bg-info text-dark{% elif order.status in ['Cancelled', 'Rejected'] %}bg-danger{% else %}bg-warning text-dark{% endif %}">
                         {{ order.status }}
                     </span>
                 </td>
-                <td>{{ order.delivery_person or 'Not Assigned' }}</td>
+                <td class="delivery-person-cell">{{ order.delivery_person or 'Not Assigned' }}</td>
                 <td>
-                    <span class="badge {% if order.delivery_boy_status == 'Completed' %}bg-success{% elif order.delivery_boy_status == 'On Route' %}bg-primary{% elif order.delivery_boy_status == 'Ready to Dispatch' %}bg-info text-dark{% else %}bg-secondary{% endif %}">
+                    <span class="badge delivery-panel-badge {% if order.delivery_boy_status == 'Completed' %}bg-success{% elif order.delivery_boy_status == 'On Route' %}bg-primary{% elif order.delivery_boy_status == 'Ready to Dispatch' %}bg-info text-dark{% else %}bg-secondary{% endif %}">
                         {{ order.delivery_boy_status }}
                     </span>
                 </td>
@@ -47,9 +47,10 @@
                 <td>{{ order.phone }}</td>
                 <td>
                     <div class="d-flex flex-wrap gap-1">
-                        <a href="{{ url_for('update_order_status', order_id=order.id, status='Preparing') }}" class="btn btn-sm btn-outline-warning">Preparing</a>
-                        <a href="{{ url_for('update_order_status', order_id=order.id, status='Ready') }}" class="btn btn-sm btn-outline-info">Ready</a>
-                        <a href="{{ url_for('update_order_status', order_id=order.id, status='Out for Delivery') }}" class="btn btn-sm btn-outline-primary">Out</a>
+                        <a href="{{ url_for('update_order_status', order_id=order.id, status='Order Accepted') }}" class="btn btn-sm btn-outline-success">Accept</a>
+                        <a href="{{ url_for('update_order_status', order_id=order.id, status='Preparing Food') }}" class="btn btn-sm btn-outline-warning">Preparing</a>
+                        <a href="{{ url_for('update_order_status', order_id=order.id, status='Ready for Pickup') }}" class="btn btn-sm btn-outline-info">Ready</a>
+                        <a href="{{ url_for('update_order_status', order_id=order.id, status='Rejected') }}" class="btn btn-sm btn-outline-danger">Reject</a>
                         <a href="{{ url_for('update_order_status', order_id=order.id, status='Delivered') }}" class="btn btn-sm btn-outline-success">Delivered</a>
                     </div>
                 </td>
@@ -58,10 +59,4 @@
         </tbody>
     </table>
 </div>
-
-<script>
-    setTimeout(function () {
-        window.location.reload();
-    }, 10000);
-</script>
 {% endblock %}
