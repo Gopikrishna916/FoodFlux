@@ -715,6 +715,41 @@ def verify_otp_challenge(recipient, purpose, otp_code):
     return True, "OTP verified successfully."
 
 
+def get_verified_mobile_for_purpose(purpose, max_age_minutes=10):
+    verified_mobile = session.get("otp_verified_mobile")
+    verified_purpose = session.get("otp_verified_purpose")
+    verified_at = session.get("otp_verified_at")
+
+    if not verified_mobile or verified_purpose != purpose or not verified_at:
+        return None, "OTP verification is required for this action."
+
+    try:
+        verified_time = datetime.strptime(verified_at, "%Y-%m-%d %H:%M:%S")
+    except ValueError:
+        return None, "OTP verification session is invalid."
+
+    if datetime.now() > (verified_time + timedelta(minutes=max_age_minutes)):
+        return None, "OTP verification expired. Please verify again."
+
+    return verified_mobile, None
+
+
+def clear_otp_session():
+    session.pop("otp_challenge_mobile", None)
+    session.pop("otp_challenge_purpose", None)
+    session.pop("otp_verified_mobile", None)
+    session.pop("otp_verified_purpose", None)
+    session.pop("otp_verified_at", None)
+
+
+def generate_mobile_shadow_email(mobile_number):
+    base_email = f"mobile_{mobile_number}@foodflux.local"
+    existing = query_db("SELECT id FROM users WHERE LOWER(email) = ?", (base_email.lower(),), one=True)
+    if not existing:
+        return base_email
+    return f"mobile_{mobile_number}_{int(datetime.now().timestamp())}@foodflux.local"
+
+
 def validate_payment_and_details(form, payment_method):
     """Validate payment inputs for each method and return sanitized summary."""
     method = (payment_method or "").strip()
@@ -932,6 +967,93 @@ def verify_otp():
     session["otp_verified_purpose"] = purpose
     session["otp_verified_at"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     return jsonify({"ok": True, "message": message})
+
+
+@app.route("/api/auth/mobile/register", methods=["POST"])
+def mobile_register():
+    payload = request.get_json(silent=True) or request.form
+    full_name = (payload.get("full_name") or payload.get("name") or "").strip()
+    password = (payload.get("password") or "").strip()
+    requested_mobile = normalize_mobile(payload.get("mobile_number"))
+
+    verified_mobile, otp_error = get_verified_mobile_for_purpose("register")
+    if otp_error:
+        return jsonify({"ok": False, "error": otp_error}), 409
+
+    if requested_mobile and requested_mobile != verified_mobile:
+        return jsonify({"ok": False, "error": "Verified OTP mobile does not match request mobile."}), 409
+
+    if not full_name or len(full_name) < 2:
+        return jsonify({"ok": False, "error": "Full name is required."}), 400
+    if len(password) < 6:
+        return jsonify({"ok": False, "error": "Password must be at least 6 characters."}), 400
+
+    existing_user = query_db("SELECT id FROM users WHERE mobile_number = ?", (verified_mobile,), one=True)
+    existing_staff = query_db("SELECT id FROM staff_users WHERE mobile_number = ?", (verified_mobile,), one=True)
+    if existing_user or existing_staff:
+        return jsonify({"ok": False, "error": "Mobile number already in use."}), 409
+
+    email = generate_mobile_shadow_email(verified_mobile)
+    db = get_db()
+    db.execute(
+        "INSERT INTO users (name, email, mobile_number, mobile_verified, password) VALUES (?, ?, ?, 1, ?)",
+        (full_name, email.lower(), verified_mobile, generate_password_hash(password)),
+    )
+    db.commit()
+    clear_otp_session()
+    return jsonify({"ok": True, "message": "Mobile registration successful."})
+
+
+@app.route("/api/auth/mobile/login", methods=["POST"])
+def mobile_login():
+    payload = request.get_json(silent=True) or request.form
+    mobile_number = normalize_mobile(payload.get("mobile_number"))
+    password = (payload.get("password") or "").strip()
+
+    if not mobile_number or not password:
+        return jsonify({"ok": False, "error": "Mobile number and password are required."}), 400
+
+    user = query_db(
+        "SELECT id, name, email, mobile_number, password FROM users WHERE mobile_number = ?",
+        (mobile_number,),
+        one=True,
+    )
+    if not user or not check_password_hash(user["password"], password):
+        return jsonify({"ok": False, "error": "Invalid mobile number or password."}), 401
+
+    session["user_id"] = user["id"]
+    session["user_name"] = user["name"]
+    session["user_email"] = user["email"]
+    session["account_role"] = "customer"
+    return jsonify({"ok": True, "message": "Login successful.", "redirect": url_for("customer_dashboard")})
+
+
+@app.route("/api/auth/mobile/login-otp", methods=["POST"])
+def mobile_login_with_otp():
+    payload = request.get_json(silent=True) or request.form
+    requested_mobile = normalize_mobile(payload.get("mobile_number"))
+
+    verified_mobile, otp_error = get_verified_mobile_for_purpose("login")
+    if otp_error:
+        return jsonify({"ok": False, "error": otp_error}), 409
+
+    if requested_mobile and requested_mobile != verified_mobile:
+        return jsonify({"ok": False, "error": "Verified OTP mobile does not match request mobile."}), 409
+
+    user = query_db(
+        "SELECT id, name, email, mobile_number FROM users WHERE mobile_number = ?",
+        (verified_mobile,),
+        one=True,
+    )
+    if not user:
+        return jsonify({"ok": False, "error": "Mobile number is not registered."}), 404
+
+    session["user_id"] = user["id"]
+    session["user_name"] = user["name"]
+    session["user_email"] = user["email"]
+    session["account_role"] = "customer"
+    clear_otp_session()
+    return jsonify({"ok": True, "message": "OTP login successful.", "redirect": url_for("customer_dashboard")})
 
 
 @app.route("/login", methods=["GET", "POST"])
