@@ -7,6 +7,7 @@ import mimetypes
 from io import BytesIO
 from datetime import datetime, timedelta
 from flask import Flask, render_template, request, redirect, url_for, flash, session, g, jsonify
+from flask_socketio import SocketIO, join_room
 from werkzeug.security import generate_password_hash, check_password_hash
 from werkzeug.utils import secure_filename
 try:
@@ -16,6 +17,7 @@ except ImportError:
 
 app = Flask(__name__)
 app.secret_key = os.environ.get("SECRET_KEY", "supersecretkey_for_demo_only")
+socketio = SocketIO(app, cors_allowed_origins="*", async_mode="threading")
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 DATABASE_PATH = os.path.join(BASE_DIR, "database.db")
@@ -217,6 +219,8 @@ def ensure_orders_schema(db):
         db.execute("ALTER TABLE orders ADD COLUMN payment_details TEXT")
     if "delivery_accepted" not in order_columns:
         db.execute("ALTER TABLE orders ADD COLUMN delivery_accepted INTEGER NOT NULL DEFAULT 0")
+    if "rider_accepted_at" not in order_columns:
+        db.execute("ALTER TABLE orders ADD COLUMN rider_accepted_at TEXT")
     if "auto_delivered_at" not in order_columns:
         db.execute("ALTER TABLE orders ADD COLUMN auto_delivered_at TEXT")
 
@@ -227,13 +231,6 @@ def ensure_orders_schema(db):
             SELECT users.name FROM users WHERE users.id = orders.user_id
         )
         WHERE customer_name IS NULL OR TRIM(customer_name) = ''
-        '''
-    )
-    db.execute(
-        '''
-        UPDATE orders
-        SET auto_delivered_at = datetime(created_at, '+30 minutes')
-        WHERE auto_delivered_at IS NULL OR TRIM(auto_delivered_at) = ''
         '''
     )
     db.execute(
@@ -252,38 +249,155 @@ def allocate_delivery_person(order_id):
     return DELIVERY_TEAM[(order_id - 1) % len(DELIVERY_TEAM)]
 
 
+def allocate_next_delivery_person(current_name):
+    if not DELIVERY_TEAM:
+        return "Not Assigned"
+    if current_name not in DELIVERY_TEAM:
+        return DELIVERY_TEAM[0]
+    current_index = DELIVERY_TEAM.index(current_name)
+    return DELIVERY_TEAM[(current_index + 1) % len(DELIVERY_TEAM)]
+
+
+def delivery_room_name(staff_name):
+    safe_name = (staff_name or "").strip().lower().replace(" ", "_")
+    return f"delivery_{safe_name}"
+
+
+def get_order_payload(order_id):
+    order = query_db(
+        '''
+        SELECT
+            o.*,
+            u.email AS customer_email
+        FROM orders o
+        LEFT JOIN users u ON u.id = o.user_id
+        WHERE o.id = ?
+        ''',
+        (order_id,),
+        one=True,
+    )
+    if not order:
+        return None
+
+    return {
+        "id": order["id"],
+        "user_id": order["user_id"],
+        "customer_name": order["customer_name"],
+        "customer_email": order["customer_email"],
+        "total": float(order["total"] or 0),
+        "payment": order["payment"],
+        "status": order["status"],
+        "delivery_person": order["delivery_person"],
+        "address": order["address"],
+        "phone": order["phone"],
+        "created_at": order["created_at"],
+        "estimated_delivery_time": order["estimated_delivery_time"],
+    }
+
+
+def status_to_socket_event(status):
+    status_map = {
+        "Order Placed": "order_created",
+        "Order Accepted": "order_accepted",
+        "Preparing Food": "preparing",
+        "Ready for Pickup": "restaurant_ready",
+        "Rider Assigned": "rider_accepted",
+        "Picked Up": "picked_up",
+        "On the Way": "on_the_way",
+        "Delivered": "delivered",
+        "Rejected": "cancelled",
+        "Cancelled": "cancelled",
+    }
+    return status_map.get(status, "order_updated")
+
+
+def emit_order_event(order_id, event_name=None, extra_payload=None):
+    payload = get_order_payload(order_id)
+    if not payload:
+        return
+
+    payload["event"] = event_name or status_to_socket_event(payload["status"])
+    if extra_payload:
+        payload.update(extra_payload)
+
+    socketio.emit("order_event", payload, room="manager")
+    socketio.emit("order_event", payload, room=f"customer_{payload['user_id']}")
+
+    if payload.get("delivery_person"):
+        socketio.emit("order_event", payload, room=delivery_room_name(payload["delivery_person"]))
+
+
 def update_due_delivery_statuses():
     db = get_db()
     current_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    due_orders = db.execute(
+        '''
+        SELECT id
+        FROM orders
+                WHERE status NOT IN ('Delivered', 'Cancelled', 'Rejected')
+          AND auto_delivered_at IS NOT NULL
+          AND auto_delivered_at <= ?
+        ''',
+        (current_time,),
+    ).fetchall()
+
     db.execute(
         '''
         UPDATE orders
         SET status = 'Delivered'
-        WHERE status != 'Delivered'
+                WHERE status NOT IN ('Delivered', 'Cancelled', 'Rejected')
           AND auto_delivered_at IS NOT NULL
           AND auto_delivered_at <= ?
         ''',
         (current_time,),
     )
-    purge_delivered_orders(db)
     db.commit()
 
+    for due_order in due_orders:
+        emit_order_event(due_order["id"], "delivered")
 
-def purge_delivered_orders(db):
-    """Permanently remove delivered orders and their dependent rows."""
-    db.execute(
-        '''
-        DELETE FROM ratings
-        WHERE order_id IN (SELECT id FROM orders WHERE status = 'Delivered')
-        '''
-    )
-    db.execute(
-        '''
-        DELETE FROM order_items
-        WHERE order_id IN (SELECT id FROM orders WHERE status = 'Delivered')
-        '''
-    )
-    db.execute("DELETE FROM orders WHERE status = 'Delivered'")
+
+@socketio.on("connect")
+def handle_socket_connect():
+    role = session.get("account_role")
+    join_room("global")
+
+    if role == "manager":
+        join_room("manager")
+    elif role == "customer" and session.get("user_id"):
+        join_room(f"customer_{session['user_id']}")
+    elif role == "delivery_partner" and session.get("staff_name"):
+        join_room(delivery_room_name(session["staff_name"]))
+
+
+@socketio.on("rider_location_update")
+def handle_rider_location_update(data):
+    order_id = data.get("order_id")
+    lat = data.get("lat")
+    lng = data.get("lng")
+    if not order_id or lat is None or lng is None:
+        return
+
+    order = query_db("SELECT id, user_id FROM orders WHERE id = ?", (order_id,), one=True)
+    if not order:
+        return
+
+    location_payload = {
+        "order_id": order["id"],
+        "lat": lat,
+        "lng": lng,
+        "event": "rider_location",
+    }
+    socketio.emit("rider_location", location_payload, room="manager")
+    socketio.emit("rider_location", location_payload, room=f"customer_{order['user_id']}")
+
+
+@socketio.on("near_customer")
+def handle_near_customer(data):
+    order_id = data.get("order_id")
+    if not order_id:
+        return
+    emit_order_event(order_id, "near_customer")
 
 
 def normalize_db_image_paths(db):
@@ -584,6 +698,7 @@ def login():
 @app.route("/customer/dashboard")
 @login_required
 def customer_dashboard():
+    update_due_delivery_statuses()
     recent_orders = query_db(
         '''
         SELECT *
@@ -599,7 +714,7 @@ def customer_dashboard():
         SELECT
             COUNT(*) AS total_orders,
             SUM(CASE WHEN status = 'Delivered' THEN 1 ELSE 0 END) AS delivered_orders,
-            SUM(CASE WHEN status != 'Delivered' THEN 1 ELSE 0 END) AS active_orders
+            SUM(CASE WHEN status NOT IN ('Delivered', 'Cancelled', 'Rejected') THEN 1 ELSE 0 END) AS active_orders
         FROM orders
         WHERE user_id = ?
         ''',
@@ -642,6 +757,11 @@ def manager_login():
         return redirect(url_for("manager_login"))
 
     return render_template("manager_login.html")
+
+
+@app.route("/manager")
+def manager_route():
+    return redirect(url_for("manager_login"))
 
 
 @app.route("/delivery/login", methods=["GET", "POST"])
@@ -788,9 +908,6 @@ def checkout():
             flash(payment_error, "danger")
             return redirect(url_for("checkout"))
 
-        estimated_delivery = calculate_estimated_delivery()
-        auto_delivered_at = datetime.now() + timedelta(minutes=30)
-
         db = get_db()
         cursor = db.execute(
             '''
@@ -808,15 +925,15 @@ def checkout():
                 phone,
                 payment,
                 payment_details,
-                "Preparing",
-                estimated_delivery.strftime("%Y-%m-%d %H:%M:%S"),
-                auto_delivered_at.strftime("%Y-%m-%d %H:%M:%S"),
+                "Order Placed",
+                None,
+                None,
             )
         )
         order_id = cursor.lastrowid
         assigned_delivery_person = allocate_delivery_person(order_id)
         db.execute(
-            "UPDATE orders SET delivery_person = ?, delivery_accepted = 1 WHERE id = ?",
+            "UPDATE orders SET delivery_person = ?, delivery_accepted = 0 WHERE id = ?",
             (assigned_delivery_person, order_id),
         )
 
@@ -826,6 +943,10 @@ def checkout():
                 (order_id, item["food"]["id"], item["qty"])
             )
         db.commit()
+
+        emit_order_event(order_id, "order_created")
+        if assigned_delivery_person and assigned_delivery_person != "Not Assigned":
+            emit_order_event(order_id, "rider_assigned")
 
         session.pop("cart", None)
         flash("Order placed successfully!", "success")
@@ -979,7 +1100,7 @@ def admin_dashboard():
         SELECT
             COUNT(*) AS total_orders,
             SUM(CASE WHEN status = 'Delivered' THEN 1 ELSE 0 END) AS delivered_orders,
-            SUM(CASE WHEN status != 'Delivered' THEN 1 ELSE 0 END) AS active_orders
+            SUM(CASE WHEN status NOT IN ('Delivered', 'Cancelled', 'Rejected') THEN 1 ELSE 0 END) AS active_orders
         FROM orders
         ''',
         one=True,
@@ -990,7 +1111,7 @@ def admin_dashboard():
             o.delivery_person,
             COUNT(*) AS assigned_orders,
             SUM(CASE WHEN o.status = 'Delivered' THEN 1 ELSE 0 END) AS delivered_orders,
-            SUM(CASE WHEN o.status != 'Delivered' THEN 1 ELSE 0 END) AS active_orders,
+            SUM(CASE WHEN o.status NOT IN ('Delivered', 'Cancelled', 'Rejected') THEN 1 ELSE 0 END) AS active_orders,
             COALESCE(
                 (
                     SELECT o2.status
@@ -1028,13 +1149,15 @@ def admin_orders():
             u.email AS customer_email,
             CASE
                 WHEN o.status = 'Delivered' THEN 'Completed'
-                WHEN o.status = 'Out for Delivery' THEN 'On Route'
-                WHEN o.status = 'Ready' THEN 'Ready to Dispatch'
+                WHEN o.status = 'On the Way' THEN 'On Route'
+                WHEN o.status = 'Ready for Pickup' THEN 'Ready to Dispatch'
+                WHEN o.status = 'Rider Assigned' THEN 'Rider Assigned'
+                WHEN o.status = 'Order Accepted' THEN 'Accepted'
                 ELSE 'Preparing'
             END AS delivery_boy_status
         FROM orders o
         LEFT JOIN users u ON u.id = o.user_id
-        WHERE o.status != 'Delivered'
+        WHERE o.status NOT IN ('Delivered', 'Cancelled', 'Rejected')
         ORDER BY o.created_at DESC
         '''
     )
@@ -1159,13 +1282,14 @@ def delete_food(food_id):
 @app.route("/manager/order/status/<int:order_id>/<status>")
 @admin_required
 def update_order_status(order_id, status):
-    valid_statuses = ["Preparing", "Ready", "Out for Delivery", "Delivered"]
+    valid_statuses = ["Order Accepted", "Preparing Food", "Ready for Pickup", "Rejected", "Cancelled", "Delivered"]
     if status not in valid_statuses:
         flash("Invalid status.", "danger")
         return redirect(url_for("admin_orders"))
     db = get_db()
     db.execute("UPDATE orders SET status = ? WHERE id = ?", (status, order_id))
     db.commit()
+    emit_order_event(order_id, status_to_socket_event(status))
     flash(f"Order status updated to {status}.", "success")
     return redirect(url_for("admin_orders"))
 
@@ -1193,7 +1317,7 @@ def delivery_dashboard():
             COUNT(*) AS total_assigned,
             SUM(CASE WHEN delivery_accepted = 1 THEN 1 ELSE 0 END) AS accepted_orders,
             SUM(CASE WHEN status = 'Delivered' THEN 1 ELSE 0 END) AS delivered_orders,
-            SUM(CASE WHEN status != 'Delivered' THEN 1 ELSE 0 END) AS active_orders
+            SUM(CASE WHEN status NOT IN ('Delivered', 'Cancelled', 'Rejected') THEN 1 ELSE 0 END) AS active_orders
         FROM orders
         WHERE delivery_person = ?
         ''',
@@ -1210,22 +1334,46 @@ def delivery_dashboard():
 @app.route("/delivery/order/status/<int:order_id>/<status>")
 @delivery_required
 def delivery_update_order_status(order_id, status):
-    valid_statuses = ["Ready", "Out for Delivery", "Delivered"]
+    valid_statuses = ["Accept", "Reject", "Picked Up", "On the Way", "Delivered"]
     if status not in valid_statuses:
         flash("Invalid delivery status.", "danger")
         return redirect(url_for("delivery_dashboard"))
 
     db = get_db()
     order = db.execute(
-        "SELECT id FROM orders WHERE id = ? AND delivery_person = ?",
+        "SELECT id, delivery_person, status FROM orders WHERE id = ? AND delivery_person = ?",
         (order_id, session.get("staff_name")),
     ).fetchone()
     if not order:
         flash("Order not assigned to you.", "warning")
         return redirect(url_for("delivery_dashboard"))
 
-    db.execute("UPDATE orders SET status = ? WHERE id = ?", (status, order_id))
+    event_name = None
+    if status == "Accept":
+        eta_time = datetime.now() + timedelta(minutes=30)
+        db.execute(
+            "UPDATE orders SET status = ?, delivery_accepted = 1, rider_accepted_at = CURRENT_TIMESTAMP, auto_delivered_at = ?, estimated_delivery_time = ? WHERE id = ?",
+            (
+                "Rider Assigned",
+                eta_time.strftime("%Y-%m-%d %H:%M:%S"),
+                eta_time.strftime("%Y-%m-%d %H:%M:%S"),
+                order_id,
+            ),
+        )
+        event_name = "rider_accepted"
+    elif status == "Reject":
+        next_rider = allocate_next_delivery_person(order["delivery_person"])
+        db.execute(
+            "UPDATE orders SET delivery_person = ?, delivery_accepted = 0, rider_accepted_at = NULL, status = ? WHERE id = ?",
+            (next_rider, "Ready for Pickup", order_id),
+        )
+        event_name = "rider_assigned"
+    else:
+        db.execute("UPDATE orders SET status = ? WHERE id = ?", (status, order_id))
+        event_name = status_to_socket_event(status)
+
     db.commit()
+    emit_order_event(order_id, event_name)
     flash(f"Delivery status updated to {status}.", "success")
     return redirect(url_for("delivery_dashboard"))
 
@@ -1241,4 +1389,4 @@ def check_order_status(order_id):
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))
-    app.run(host="0.0.0.0", port=port, debug=True)
+    socketio.run(app, host="0.0.0.0", port=port, debug=True)

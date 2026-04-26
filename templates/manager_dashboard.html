@@ -61,7 +61,7 @@
                         <tr>
                             <td>{{ member.delivery_person }}</td>
                             <td>
-                                <span class="badge {% if member.latest_status == 'Delivered' %}bg-success{% elif member.latest_status == 'Out for Delivery' %}bg-primary{% elif member.latest_status == 'Ready' %}bg-info text-dark{% else %}bg-secondary{% endif %}">
+                                <span class="badge {% if member.latest_status == 'Delivered' %}bg-success{% elif member.latest_status in ['On the Way', 'Picked Up'] %}bg-primary{% elif member.latest_status in ['Ready for Pickup', 'Order Accepted', 'Rider Assigned'] %}bg-info text-dark{% elif member.latest_status in ['Cancelled', 'Rejected'] %}bg-danger{% else %}bg-secondary{% endif %}">
                                     {{ member.latest_status }}
                                 </span>
                             </td>
@@ -121,9 +121,4 @@
     </table>
 </div>
 
-<script>
-    setTimeout(function () {
-        window.location.reload();
-    }, 15000);
-</script>
 {% endblock %}
