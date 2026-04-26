@@ -1,25 +1,50 @@
 {% extends "base.html" %}
 {% block content %}
-<div class="row justify-content-center">
-    <div class="col-md-6">
-        <div class="card shadow-sm">
-            <div class="card-body">
-                <h2 class="card-title mb-4">Customer Login</h2>
-                <p class="text-muted mb-4">Access your customer dashboard, track orders, and place new food orders.</p>
-                <form method="post">
-                    <div class="mb-3">
-                        <label class="form-label">Email</label>
-                        <input type="email" name="email" class="form-control" placeholder="Enter your email" required />
+<div class="row justify-content-center auth-layout">
+    <div class="col-lg-7 col-xl-6">
+        <div class="card auth-card shadow-sm">
+            <div class="card-body p-4 p-md-5">
+                <div class="auth-header mb-4">
+                    <span class="auth-icon" aria-hidden="true"><i class="bi bi-person-circle"></i></span>
+                    <div>
+                        <h2 class="card-title mb-1">Customer Login</h2>
+                        <p class="text-muted mb-0">Access your dashboard, track live orders, and reorder your favorites fast.</p>
                     </div>
+                </div>
+
+                <form method="post" class="js-login-form" novalidate>
                     <div class="mb-3">
+                        <label class="form-label">Email Address</label>
+                        <div class="input-group auth-input-group">
+                            <span class="input-group-text"><i class="bi bi-envelope"></i></span>
+                            <input type="email" name="email" class="form-control" placeholder="Enter your email" autocomplete="email" required />
+                        </div>
+                    </div>
+
+                    <div class="mb-2">
                         <label class="form-label">Password</label>
-                        <input type="password" name="password" class="form-control" placeholder="Enter your password" required />
+                        <div class="input-group auth-input-group">
+                            <span class="input-group-text"><i class="bi bi-lock"></i></span>
+                            <input type="password" name="password" class="form-control js-password-input" placeholder="Enter your password" autocomplete="current-password" required />
+                            <button type="button" class="btn btn-outline-secondary js-password-toggle" aria-label="Show password">
+                                <i class="bi bi-eye"></i>
+                            </button>
+                        </div>
                     </div>
-                    <button type="submit" class="btn btn-primary w-100">Login</button>
+
+                    <div class="d-flex justify-content-between align-items-center mb-4">
+                        <small class="text-muted js-caps-warning d-none">Caps Lock is on</small>
+                        <small class="text-muted">Secure login enabled</small>
+                    </div>
+
+                    <button type="submit" class="btn btn-primary w-100 js-login-submit">
+                        <span class="js-login-submit-text">Login</span>
+                    </button>
                 </form>
-                <div class="text-center mt-3 small text-muted">
-                    <a href="{{ url_for('register') }}">New customer? Register now</a> |
-                    <a href="{{ url_for('manager_login') }}">Manager login</a> |
+
+                <div class="text-center mt-4 small text-muted auth-links">
+                    <a href="{{ url_for('register') }}">New customer? Register now</a>
+                    <a href="{{ url_for('manager_login') }}">Manager login</a>
                     <a href="{{ url_for('delivery_login') }}">Delivery login</a>
                 </div>
             </div>

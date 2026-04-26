@@ -1,24 +1,49 @@
 {% extends "base.html" %}
 {% block content %}
-<div class="row justify-content-center">
-    <div class="col-md-5">
-        <div class="card shadow-sm">
-            <div class="card-body">
-                <h2 class="card-title mb-3">Delivery Partner Login</h2>
-                <p class="text-muted mb-4">Sign in to view assigned orders and update delivery status.</p>
-                <form method="post">
-                    <div class="mb-3">
-                        <label class="form-label">Email</label>
-                        <input type="email" name="email" class="form-control" placeholder="delivery@ckfood.com" required />
+<div class="row justify-content-center auth-layout">
+    <div class="col-lg-6 col-xl-5">
+        <div class="card auth-card shadow-sm">
+            <div class="card-body p-4 p-md-5">
+                <div class="auth-header mb-4">
+                    <span class="auth-icon" aria-hidden="true"><i class="bi bi-bicycle"></i></span>
+                    <div>
+                        <h2 class="card-title mb-1">Delivery Partner Login</h2>
+                        <p class="text-muted mb-0">Sign in to view assigned orders and update delivery status.</p>
                     </div>
+                </div>
+
+                <form method="post" class="js-login-form" novalidate>
                     <div class="mb-3">
+                        <label class="form-label">Partner Email</label>
+                        <div class="input-group auth-input-group">
+                            <span class="input-group-text"><i class="bi bi-envelope"></i></span>
+                            <input type="email" name="email" class="form-control" placeholder="delivery@ckfood.com" autocomplete="email" required />
+                        </div>
+                    </div>
+
+                    <div class="mb-2">
                         <label class="form-label">Password</label>
-                        <input type="password" name="password" class="form-control" placeholder="Enter partner password" required />
+                        <div class="input-group auth-input-group">
+                            <span class="input-group-text"><i class="bi bi-lock"></i></span>
+                            <input type="password" name="password" class="form-control js-password-input" placeholder="Enter partner password" autocomplete="current-password" required />
+                            <button type="button" class="btn btn-outline-secondary js-password-toggle" aria-label="Show password">
+                                <i class="bi bi-eye"></i>
+                            </button>
+                        </div>
                     </div>
-                    <button class="btn btn-primary w-100">Login</button>
+
+                    <div class="d-flex justify-content-between align-items-center mb-4">
+                        <small class="text-muted js-caps-warning d-none">Caps Lock is on</small>
+                        <small class="text-muted">Live dispatch sync enabled</small>
+                    </div>
+
+                    <button type="submit" class="btn btn-primary w-100 js-login-submit">
+                        <span class="js-login-submit-text">Login</span>
+                    </button>
                 </form>
-                <div class="text-center mt-3 small text-muted">
-                    <a href="{{ url_for('login') }}">Customer login</a> |
+
+                <div class="text-center mt-4 small text-muted auth-links">
+                    <a href="{{ url_for('login') }}">Customer login</a>
                     <a href="{{ url_for('manager_login') }}">Manager login</a>
                 </div>
             </div>

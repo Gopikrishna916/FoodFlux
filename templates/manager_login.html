@@ -1,24 +1,49 @@
 {% extends "base.html" %}
 {% block content %}
-<div class="row justify-content-center">
-    <div class="col-md-5">
-        <div class="card shadow-sm">
-            <div class="card-body">
-                <h2 class="card-title mb-3">Hotel Manager Login</h2>
-                <p class="text-muted mb-4">Access menu control, order handling, and delivery operations.</p>
-                <form method="post">
-                    <div class="mb-3">
-                        <label class="form-label">Email</label>
-                        <input type="email" name="email" class="form-control" placeholder="manager@ckfood.com" required />
+<div class="row justify-content-center auth-layout">
+    <div class="col-lg-6 col-xl-5">
+        <div class="card auth-card shadow-sm">
+            <div class="card-body p-4 p-md-5">
+                <div class="auth-header mb-4">
+                    <span class="auth-icon" aria-hidden="true"><i class="bi bi-clipboard2-data"></i></span>
+                    <div>
+                        <h2 class="card-title mb-1">Hotel Manager Login</h2>
+                        <p class="text-muted mb-0">Access menu control, order handling, and delivery operations.</p>
                     </div>
+                </div>
+
+                <form method="post" class="js-login-form" novalidate>
                     <div class="mb-3">
+                        <label class="form-label">Manager Email</label>
+                        <div class="input-group auth-input-group">
+                            <span class="input-group-text"><i class="bi bi-envelope"></i></span>
+                            <input type="email" name="email" class="form-control" placeholder="manager@ckfood.com" autocomplete="email" required />
+                        </div>
+                    </div>
+
+                    <div class="mb-2">
                         <label class="form-label">Password</label>
-                        <input type="password" name="password" class="form-control" placeholder="Enter manager password" required />
+                        <div class="input-group auth-input-group">
+                            <span class="input-group-text"><i class="bi bi-lock"></i></span>
+                            <input type="password" name="password" class="form-control js-password-input" placeholder="Enter manager password" autocomplete="current-password" required />
+                            <button type="button" class="btn btn-outline-secondary js-password-toggle" aria-label="Show password">
+                                <i class="bi bi-eye"></i>
+                            </button>
+                        </div>
                     </div>
-                    <button class="btn btn-primary w-100">Login</button>
+
+                    <div class="d-flex justify-content-between align-items-center mb-4">
+                        <small class="text-muted js-caps-warning d-none">Caps Lock is on</small>
+                        <small class="text-muted">Manager portal security check active</small>
+                    </div>
+
+                    <button type="submit" class="btn btn-primary w-100 js-login-submit">
+                        <span class="js-login-submit-text">Login</span>
+                    </button>
                 </form>
-                <div class="text-center mt-3 small text-muted">
-                    <a href="{{ url_for('login') }}">Customer login</a> |
+
+                <div class="text-center mt-4 small text-muted auth-links">
+                    <a href="{{ url_for('login') }}">Customer login</a>
                     <a href="{{ url_for('delivery_login') }}">Delivery login</a>
                 </div>
             </div>

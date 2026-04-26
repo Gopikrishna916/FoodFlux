@@ -149,6 +149,66 @@ document.addEventListener("DOMContentLoaded", function () {
         });
     }
 
+    function initEnhancedLoginForms() {
+        const forms = document.querySelectorAll(".js-login-form");
+        if (!forms.length) {
+            return;
+        }
+
+        forms.forEach((form) => {
+            const passwordInput = form.querySelector(".js-password-input");
+            const toggleButton = form.querySelector(".js-password-toggle");
+            const capsWarning = form.querySelector(".js-caps-warning");
+            const submitButton = form.querySelector(".js-login-submit");
+            const submitText = form.querySelector(".js-login-submit-text");
+            const defaultSubmitText = submitText ? submitText.textContent : "Login";
+
+            if (toggleButton && passwordInput) {
+                toggleButton.addEventListener("click", function () {
+                    const icon = toggleButton.querySelector("i");
+                    const isPassword = passwordInput.type === "password";
+                    passwordInput.type = isPassword ? "text" : "password";
+                    toggleButton.setAttribute("aria-label", isPassword ? "Hide password" : "Show password");
+                    if (icon) {
+                        icon.className = isPassword ? "bi bi-eye-slash" : "bi bi-eye";
+                    }
+                });
+            }
+
+            if (passwordInput && capsWarning) {
+                passwordInput.addEventListener("keyup", function (event) {
+                    if (typeof event.getModifierState !== "function") {
+                        return;
+                    }
+                    const capsActive = event.getModifierState("CapsLock");
+                    capsWarning.classList.toggle("d-none", !capsActive);
+                });
+
+                passwordInput.addEventListener("blur", function () {
+                    capsWarning.classList.add("d-none");
+                });
+            }
+
+            form.addEventListener("submit", function () {
+                if (submitButton) {
+                    submitButton.disabled = true;
+                }
+                if (submitText) {
+                    submitText.textContent = "Signing in...";
+                }
+
+                setTimeout(function () {
+                    if (submitButton) {
+                        submitButton.disabled = false;
+                    }
+                    if (submitText) {
+                        submitText.textContent = defaultSubmitText;
+                    }
+                }, 9000);
+            });
+        });
+    }
+
     function statusBadgeClass(status) {
         if (status === "Delivered") {
             return "badge bg-success order-status-badge";
@@ -454,6 +514,7 @@ document.addEventListener("DOMContentLoaded", function () {
     initScrollReveal();
     initWishlistButtons();
     initQtySteppers();
+    initEnhancedLoginForms();
     initRealtime();
     updateCustomerCounters();
     updateDeliveryCounters();

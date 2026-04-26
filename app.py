@@ -676,6 +676,13 @@ def register():
 
 @app.route("/login", methods=["GET", "POST"])
 def login():
+    if session.get("account_role") == "customer" and session.get("user_id"):
+        return redirect(url_for("customer_dashboard"))
+    if session.get("account_role") == "manager" and session.get("staff_id"):
+        return redirect(url_for("admin_dashboard"))
+    if session.get("account_role") == "delivery_partner" and session.get("staff_id"):
+        return redirect(url_for("delivery_dashboard"))
+
     if request.method == "POST":
         email = request.form.get("email")
         password = request.form.get("password")
@@ -739,6 +746,9 @@ def logout():
 
 @app.route("/manager/login", methods=["GET", "POST"])
 def manager_login():
+    if session.get("account_role") == "manager" and session.get("staff_id"):
+        return redirect(url_for("admin_dashboard"))
+
     if request.method == "POST":
         email = request.form.get("email")
         password = request.form.get("password")
@@ -766,6 +776,9 @@ def manager_route():
 
 @app.route("/delivery/login", methods=["GET", "POST"])
 def delivery_login():
+    if session.get("account_role") == "delivery_partner" and session.get("staff_id"):
+        return redirect(url_for("delivery_dashboard"))
+
     if request.method == "POST":
         email = request.form.get("email")
         password = request.form.get("password")

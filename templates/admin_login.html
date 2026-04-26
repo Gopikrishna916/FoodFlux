@@ -1,20 +1,45 @@
 {% extends "base.html" %}
 {% block content %}
-<div class="row justify-content-center">
-    <div class="col-md-5">
-        <div class="card shadow-sm">
-            <div class="card-body">
-                <h2 class="card-title mb-4">Admin Login</h2>
-                <form method="post">
+<div class="row justify-content-center auth-layout">
+    <div class="col-lg-6 col-xl-5">
+        <div class="card auth-card shadow-sm">
+            <div class="card-body p-4 p-md-5">
+                <div class="auth-header mb-4">
+                    <span class="auth-icon" aria-hidden="true"><i class="bi bi-shield-lock"></i></span>
+                    <div>
+                        <h2 class="card-title mb-1">Admin Login</h2>
+                        <p class="text-muted mb-0">Use admin credentials to access full platform controls.</p>
+                    </div>
+                </div>
+
+                <form method="post" class="js-login-form" novalidate>
                     <div class="mb-3">
                         <label class="form-label">Admin Email</label>
-                        <input type="email" name="email" class="form-control" placeholder="admin@example.com" required />
+                        <div class="input-group auth-input-group">
+                            <span class="input-group-text"><i class="bi bi-envelope"></i></span>
+                            <input type="email" name="email" class="form-control" placeholder="admin@example.com" autocomplete="email" required />
+                        </div>
                     </div>
-                    <div class="mb-3">
+
+                    <div class="mb-2">
                         <label class="form-label">Password</label>
-                        <input type="password" name="password" class="form-control" placeholder="Enter admin password" required />
+                        <div class="input-group auth-input-group">
+                            <span class="input-group-text"><i class="bi bi-lock"></i></span>
+                            <input type="password" name="password" class="form-control js-password-input" placeholder="Enter admin password" autocomplete="current-password" required />
+                            <button type="button" class="btn btn-outline-secondary js-password-toggle" aria-label="Show password">
+                                <i class="bi bi-eye"></i>
+                            </button>
+                        </div>
                     </div>
-                    <button class="btn btn-primary w-100">Login</button>
+
+                    <div class="d-flex justify-content-between align-items-center mb-4">
+                        <small class="text-muted js-caps-warning d-none">Caps Lock is on</small>
+                        <small class="text-muted">Protected area</small>
+                    </div>
+
+                    <button class="btn btn-primary w-100 js-login-submit" type="submit">
+                        <span class="js-login-submit-text">Login</span>
+                    </button>
                 </form>
             </div>
         </div>
