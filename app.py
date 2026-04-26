@@ -18,6 +18,7 @@ except ImportError:
 app = Flask(__name__)
 app.secret_key = os.environ.get("SECRET_KEY", "supersecretkey_for_demo_only")
 socketio = SocketIO(app, cors_allowed_origins="*", async_mode="threading")
+app.config["SEND_FILE_MAX_AGE_DEFAULT"] = int(os.environ.get("STATIC_CACHE_SECONDS", "86400"))
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 DATABASE_PATH = os.path.join(BASE_DIR, "database.db")
@@ -172,6 +173,7 @@ def init_db():
     )
     ensure_staff_schema(db)
     ensure_orders_schema(db)
+    ensure_performance_indexes(db)
     db.commit()
     normalize_db_image_paths(db)
     seed_foods(db)
@@ -190,22 +192,39 @@ def ensure_staff_schema(db):
         db.execute("ALTER TABLE staff_users ADD COLUMN is_active INTEGER NOT NULL DEFAULT 1")
 
 
+def ensure_performance_indexes(db):
+    index_statements = [
+        "CREATE INDEX IF NOT EXISTS idx_orders_user_created_at ON orders(user_id, created_at DESC)",
+        "CREATE INDEX IF NOT EXISTS idx_orders_status ON orders(status)",
+        "CREATE INDEX IF NOT EXISTS idx_orders_delivery_status ON orders(delivery_person, status)",
+        "CREATE INDEX IF NOT EXISTS idx_orders_auto_delivered_at ON orders(auto_delivered_at)",
+        "CREATE INDEX IF NOT EXISTS idx_order_items_order_id ON order_items(order_id)",
+        "CREATE INDEX IF NOT EXISTS idx_order_items_food_id ON order_items(food_id)",
+        "CREATE INDEX IF NOT EXISTS idx_ratings_user_order ON ratings(user_id, order_id)",
+    ]
+    for statement in index_statements:
+        db.execute(statement)
+
+
 def seed_staff_users(db):
     manager_password_hash = generate_password_hash(MANAGER_PASSWORD)
-    existing_manager = db.execute("SELECT id FROM staff_users WHERE email = ?", (MANAGER_EMAIL,)).fetchone()
-    if not existing_manager:
+    existing_staff_rows = db.execute("SELECT email FROM staff_users").fetchall()
+    existing_emails = {row["email"].lower() for row in existing_staff_rows}
+
+    if MANAGER_EMAIL.lower() not in existing_emails:
         db.execute(
             "INSERT INTO staff_users (name, email, password, role) VALUES (?, ?, ?, ?)",
             ("Hotel Manager", MANAGER_EMAIL, manager_password_hash, "manager"),
         )
+        existing_emails.add(MANAGER_EMAIL.lower())
 
     for name, email, password in DELIVERY_STAFF:
-        existing_partner = db.execute("SELECT id FROM staff_users WHERE email = ?", (email,)).fetchone()
-        if not existing_partner:
+        if email.lower() not in existing_emails:
             db.execute(
                 "INSERT INTO staff_users (name, email, password, role) VALUES (?, ?, ?, ?)",
                 (name, email, generate_password_hash(password), "delivery_partner"),
             )
+            existing_emails.add(email.lower())
 
 
 def ensure_orders_schema(db):
@@ -434,16 +453,18 @@ def ensure_image_aliases():
 
 
 def seed_foods(db):
+    existing_food_rows = db.execute("SELECT name FROM foods").fetchall()
+    existing_names = {row["name"] for row in existing_food_rows}
+
     for food in FOOD_CATALOG:
-        existing = db.execute("SELECT id FROM foods WHERE name = ?", (food[0],)).fetchone()
-        if not existing:
+        if food[0] not in existing_names:
             db.execute("INSERT INTO foods (name, category, price, image, description) VALUES (?, ?, ?, ?, ?)", food)
     db.commit()
 
 
 def fix_food_images(db):
     for name, _, _, image, _ in FOOD_CATALOG:
-        db.execute("UPDATE foods SET image = ? WHERE name = ?", (image, name))
+        db.execute("UPDATE foods SET image = ? WHERE name = ? AND image != ?", (image, name, image))
     db.commit()
 
 
@@ -684,10 +705,14 @@ def login():
         return redirect(url_for("delivery_dashboard"))
 
     if request.method == "POST":
-        email = request.form.get("email")
-        password = request.form.get("password")
+        email = (request.form.get("email") or "").strip().lower()
+        password = request.form.get("password") or ""
 
-        user = query_db("SELECT * FROM users WHERE email = ?", (email,), one=True)
+        if not email or not password:
+            flash("Email and password are required.", "danger")
+            return redirect(url_for("login"))
+
+        user = query_db("SELECT id, name, email, password FROM users WHERE email = ?", (email,), one=True)
         if user and check_password_hash(user["password"], password):
             session["user_id"] = user["id"]
             session["user_name"] = user["name"]
@@ -750,10 +775,18 @@ def manager_login():
         return redirect(url_for("admin_dashboard"))
 
     if request.method == "POST":
-        email = request.form.get("email")
-        password = request.form.get("password")
+        email = (request.form.get("email") or "").strip().lower()
+        password = request.form.get("password") or ""
 
-        staff = query_db("SELECT * FROM staff_users WHERE email = ? AND role = 'manager' AND is_active = 1", (email,), one=True)
+        if not email or not password:
+            flash("Email and password are required.", "danger")
+            return redirect(url_for("manager_login"))
+
+        staff = query_db(
+            "SELECT id, name, email, role, password FROM staff_users WHERE email = ? AND role = 'manager' AND is_active = 1",
+            (email,),
+            one=True,
+        )
         if staff and check_password_hash(staff["password"], password):
             session["staff_id"] = staff["id"]
             session["staff_name"] = staff["name"]
@@ -780,10 +813,18 @@ def delivery_login():
         return redirect(url_for("delivery_dashboard"))
 
     if request.method == "POST":
-        email = request.form.get("email")
-        password = request.form.get("password")
+        email = (request.form.get("email") or "").strip().lower()
+        password = request.form.get("password") or ""
 
-        staff = query_db("SELECT * FROM staff_users WHERE email = ? AND role = 'delivery_partner' AND is_active = 1", (email,), one=True)
+        if not email or not password:
+            flash("Email and password are required.", "danger")
+            return redirect(url_for("delivery_login"))
+
+        staff = query_db(
+            "SELECT id, name, email, role, password FROM staff_users WHERE email = ? AND role = 'delivery_partner' AND is_active = 1",
+            (email,),
+            one=True,
+        )
         if staff and check_password_hash(staff["password"], password):
             session["staff_id"] = staff["id"]
             session["staff_name"] = staff["name"]
@@ -824,6 +865,11 @@ def menu():
     query += " GROUP BY f.id ORDER BY f.id DESC"
     foods = query_db(query, tuple(args))
     return render_template("menu.html", foods=foods, category=category, search=search)
+
+
+@app.route("/healthz")
+def healthz():
+    return jsonify({"status": "ok"}), 200
 
 
 @app.route("/add_to_cart/<int:food_id>")

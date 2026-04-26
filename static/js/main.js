@@ -209,6 +209,32 @@ document.addEventListener("DOMContentLoaded", function () {
         });
     }
 
+    function initRoutePrefetch() {
+        const role = document.body.getAttribute("data-role") || "guest";
+        if (role !== "guest" || typeof fetch !== "function") {
+            return;
+        }
+
+        const routes = ["/login", "/register", "/manager/login", "/delivery/login"];
+        const prefetch = function () {
+            routes.forEach((route) => {
+                fetch(route, {
+                    method: "GET",
+                    credentials: "same-origin",
+                    headers: { "X-Requested-With": "prefetch" },
+                }).catch(function () {
+                    // Ignore prefetch errors; route loads normally when clicked.
+                });
+            });
+        };
+
+        if ("requestIdleCallback" in window) {
+            window.requestIdleCallback(prefetch, { timeout: 1200 });
+        } else {
+            setTimeout(prefetch, 600);
+        }
+    }
+
     function statusBadgeClass(status) {
         if (status === "Delivered") {
             return "badge bg-success order-status-badge";
@@ -515,6 +541,7 @@ document.addEventListener("DOMContentLoaded", function () {
     initWishlistButtons();
     initQtySteppers();
     initEnhancedLoginForms();
+    initRoutePrefetch();
     initRealtime();
     updateCustomerCounters();
     updateDeliveryCounters();

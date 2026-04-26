@@ -3,6 +3,7 @@ services:
     name: foodflux
     env: python
     plan: free
+    healthCheckPath: /healthz
     buildCommand: pip install -r requirements.txt
     startCommand: gunicorn wsgi:app
     envVars:
