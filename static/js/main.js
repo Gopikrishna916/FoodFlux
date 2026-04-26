@@ -425,106 +425,215 @@ document.addEventListener("DOMContentLoaded", function () {
         }
     }
 
-    function initRealtime() {
-        if (typeof io === "undefined") {
+    let liveRefreshLocked = false;
+
+    function showLiveRefreshing() {
+        if (liveRefreshLocked) {
+            return;
+        }
+        liveRefreshLocked = true;
+        const existing = document.getElementById("liveRefreshToast");
+        if (existing) {
+            return;
+        }
+        const toast = document.createElement("div");
+        toast.id = "liveRefreshToast";
+        toast.className = "alert alert-info";
+        toast.style.position = "fixed";
+        toast.style.bottom = "16px";
+        toast.style.right = "16px";
+        toast.style.zIndex = "10000";
+        toast.innerHTML = '<span class="spinner-border spinner-border-sm me-2" role="status" aria-hidden="true"></span>Refreshing live updates...';
+        document.body.appendChild(toast);
+    }
+
+    function parseDateSafe(value) {
+        if (!value) {
+            return null;
+        }
+        const normalized = String(value).trim().replace(" ", "T");
+        const parsed = new Date(normalized);
+        if (Number.isNaN(parsed.getTime())) {
+            return null;
+        }
+        return parsed;
+    }
+
+    function initDashboardPolling() {
+        const watcher = document.querySelector(".js-live-watch");
+        if (!watcher) {
             return;
         }
 
-        const socket = io({ transports: ["websocket", "polling"] });
+        const endpoint = watcher.getAttribute("data-live-endpoint");
+        let currentToken = watcher.getAttribute("data-live-token") || "";
+        if (!endpoint) {
+            return;
+        }
 
-        socket.on("connect", function () {
-            // Connected; rooms are assigned server-side using session.
-        });
-
-        socket.on("order_event", function (payload) {
-            if (!payload || !payload.id) {
-                return;
-            }
-
-            updateRowByOrderId("customerOrdersTable", payload);
-            updateRowByOrderId("deliveryOrdersTable", payload);
-            updateRowByOrderId("managerOrdersTable", payload, { removeOnDelivered: true });
-            updateCustomerCounters();
-            updateDeliveryCounters();
-            handleTrackOrderRealtime(payload);
-
-            const eventMessage = {
-                order_created: `Order #${payload.id} placed successfully.`,
-                rider_assigned: `Delivery partner ${payload.delivery_person || "assigned"} for order #${payload.id}.`,
-                order_accepted: `Order #${payload.id} accepted by restaurant.`,
-                restaurant_ready: `Order #${payload.id} is ready for pickup.`,
-                preparing: `Order #${payload.id} is being prepared.`,
-                rider_accepted: `Rider accepted order #${payload.id}.`,
-                picked_up: `Order #${payload.id} is out for delivery.`,
-                on_the_way: `Order #${payload.id} is on the way.`,
-                near_customer: `Rider is near your location for order #${payload.id}.`,
-                delivered: `Order #${payload.id} delivered.`,
-                cancelled: `Order #${payload.id} was cancelled.`,
-            };
-
-            const text = eventMessage[payload.event];
-            if (text) {
-                const css = payload.event === "delivered" ? "alert-success" : "alert-info";
-                showLiveToast("Live Update", text, css);
-            }
-        });
-
-        socket.on("rider_location", function (payload) {
-            if (!payload || !payload.order_id) {
-                return;
-            }
-            window.latestRiderLocation = payload;
-
-            const mapStatus = document.getElementById("riderLiveLocationText");
-            if (mapStatus) {
-                mapStatus.textContent = `Rider location updated: ${payload.lat.toFixed(5)}, ${payload.lng.toFixed(5)}`;
-            }
-
-            if (window.updateRiderMapMarker) {
-                window.updateRiderMapMarker(payload.lat, payload.lng);
-            }
-        });
-
-        const role = document.body.getAttribute("data-role");
-        if (role === "delivery_partner" && navigator.geolocation) {
-            setInterval(function () {
-                const candidateRows = document.querySelectorAll("#deliveryOrdersTable tr[data-order-id]");
-                let activeRow = null;
-
-                candidateRows.forEach((row) => {
-                    if (activeRow) {
+        setInterval(function () {
+            fetch(endpoint, {
+                method: "GET",
+                credentials: "same-origin",
+                headers: { "X-Requested-With": "XMLHttpRequest" },
+            })
+                .then((response) => {
+                    if (!response.ok) {
+                        throw new Error("live fetch failed");
+                    }
+                    return response.json();
+                })
+                .then((payload) => {
+                    if (!payload || typeof payload.token !== "string") {
                         return;
                     }
-                    const badge = row.querySelector(".order-status-badge");
-                    const status = (badge ? badge.textContent : "").trim();
-                    if (["Rider Assigned", "Picked Up", "On the Way"].includes(status)) {
-                        activeRow = row;
+                    if (payload.token !== currentToken) {
+                        showLiveRefreshing();
+                        window.location.reload();
                     }
+                    currentToken = payload.token;
+                })
+                .catch(function () {
+                    // Ignore transient poll errors.
                 });
+        }, 5000);
+    }
 
-                if (!activeRow) {
+    function initTrackOrderPolling() {
+        const watcher = document.querySelector(".js-track-live-watch");
+        const badge = document.getElementById("statusBadge");
+        if (!watcher || !badge) {
+            return;
+        }
+
+        const endpoint = watcher.getAttribute("data-live-endpoint");
+        const partnerEl = document.getElementById("trackDeliveryPartner");
+        const timerDisplay = document.getElementById("timerDisplay");
+        let lastSignature = "";
+
+        if (!endpoint) {
+            return;
+        }
+
+        setInterval(function () {
+            fetch(endpoint, {
+                method: "GET",
+                credentials: "same-origin",
+                headers: { "X-Requested-With": "XMLHttpRequest" },
+            })
+                .then((response) => {
+                    if (!response.ok) {
+                        throw new Error("track fetch failed");
+                    }
+                    return response.json();
+                })
+                .then((payload) => {
+                    if (!payload || !payload.id) {
+                        return;
+                    }
+
+                    const nextSignature = [
+                        payload.status || "",
+                        payload.delivery_person || "",
+                        payload.estimated_delivery_time || "",
+                    ].join("|");
+
+                    if (lastSignature === "") {
+                        lastSignature = nextSignature;
+                    }
+
+                    badge.className = statusBadgeClass(payload.status);
+                    badge.id = "statusBadge";
+                    badge.setAttribute("data-order-id", String(payload.id));
+                    badge.textContent = payload.status;
+
+                    if (partnerEl) {
+                        partnerEl.textContent = payload.delivery_person || "Assigning...";
+                    }
+
+                    if (timerDisplay && payload.estimated_delivery_time) {
+                        timerDisplay.setAttribute("data-estimated-delivery", payload.estimated_delivery_time);
+                    }
+
+                    if (payload.rider_location && window.updateRiderMapMarker) {
+                        window.updateRiderMapMarker(payload.rider_location.lat, payload.rider_location.lng);
+                        const mapStatus = document.getElementById("riderLiveLocationText");
+                        if (mapStatus) {
+                            mapStatus.textContent = `Rider location updated: ${payload.rider_location.lat.toFixed(5)}, ${payload.rider_location.lng.toFixed(5)}`;
+                        }
+                    }
+
+                    if (nextSignature !== lastSignature) {
+                        const oldEta = parseDateSafe(lastSignature.split("|")[2]);
+                        const newEta = parseDateSafe(payload.estimated_delivery_time);
+                        if ((oldEta && newEta && oldEta.getTime() !== newEta.getTime()) || (!oldEta && newEta) || payload.status === "Delivered") {
+                            showLiveRefreshing();
+                            window.location.reload();
+                            return;
+                        }
+                        lastSignature = nextSignature;
+                    }
+                })
+                .catch(function () {
+                    // Ignore transient poll errors.
+                });
+        }, 4000);
+    }
+
+    function initDeliveryLocationSync() {
+        const role = document.body.getAttribute("data-role");
+        if (role !== "delivery_partner" || !navigator.geolocation) {
+            return;
+        }
+
+        setInterval(function () {
+            const candidateRows = document.querySelectorAll("#deliveryOrdersTable tr[data-order-id]");
+            let activeRow = null;
+
+            candidateRows.forEach((row) => {
+                if (activeRow) {
                     return;
                 }
-
-                const orderId = parseInt(activeRow.getAttribute("data-order-id") || "0", 10);
-                if (!orderId) {
-                    return;
+                const badge = row.querySelector(".order-status-badge");
+                const status = (badge ? badge.textContent : "").trim();
+                if (["Rider Assigned", "Picked Up", "On the Way"].includes(status)) {
+                    activeRow = row;
                 }
-                navigator.geolocation.getCurrentPosition(
-                    function (position) {
-                        socket.emit("rider_location_update", {
+            });
+
+            if (!activeRow) {
+                return;
+            }
+
+            const orderId = parseInt(activeRow.getAttribute("data-order-id") || "0", 10);
+            if (!orderId) {
+                return;
+            }
+
+            navigator.geolocation.getCurrentPosition(
+                function (position) {
+                    fetch("/api/rider/location", {
+                        method: "POST",
+                        credentials: "same-origin",
+                        headers: {
+                            "Content-Type": "application/json",
+                            "X-Requested-With": "XMLHttpRequest",
+                        },
+                        body: JSON.stringify({
                             order_id: orderId,
                             lat: position.coords.latitude,
                             lng: position.coords.longitude,
-                        });
-                    },
-                    function () {
-                        // Ignore denied location errors silently.
-                    },
-                    { enableHighAccuracy: true, maximumAge: 5000 }
-                );
-            }, 5000);
-        }
+                        }),
+                    }).catch(function () {
+                        // Ignore transient sync failures.
+                    });
+                },
+                function () {
+                    // Ignore denied location errors silently.
+                },
+                { enableHighAccuracy: true, maximumAge: 5000 }
+            );
+        }, 7000);
     }
 
     if (paymentMethod) {
@@ -542,7 +651,9 @@ document.addEventListener("DOMContentLoaded", function () {
     initQtySteppers();
     initEnhancedLoginForms();
     initRoutePrefetch();
-    initRealtime();
+    initDashboardPolling();
+    initTrackOrderPolling();
+    initDeliveryLocationSync();
     updateCustomerCounters();
     updateDeliveryCounters();
 });

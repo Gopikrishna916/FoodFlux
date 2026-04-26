@@ -249,6 +249,32 @@ body[data-theme="dark"] .auth-input-group .input-group-text {
     text-decoration: underline;
 }
 
+.alert {
+    border: 0;
+    border-left: 4px solid rgba(0, 0, 0, 0.18);
+    box-shadow: 0 8px 24px rgba(15, 23, 42, 0.08);
+}
+
+.alert-success { border-left-color: #198754; }
+.alert-danger { border-left-color: #dc3545; }
+.alert-warning { border-left-color: #ffc107; }
+.alert-info { border-left-color: #0dcaf0; }
+
+.order-status-badge,
+.delivery-panel-badge {
+    min-width: 122px;
+    text-align: center;
+    font-weight: 600;
+}
+
+@media (max-width: 768px) {
+    .table th,
+    .table td {
+        font-size: 0.86rem;
+        white-space: nowrap;
+    }
+}
+
 .hero-section {
     position: relative;
     border-radius: 24px;

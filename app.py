@@ -4,6 +4,7 @@ import shutil
 import sqlite3
 import base64
 import mimetypes
+import json
 from io import BytesIO
 from datetime import datetime, timedelta
 from flask import Flask, render_template, request, redirect, url_for, flash, session, g, jsonify
@@ -171,6 +172,35 @@ def init_db():
         )
         '''
     )
+    db.execute(
+        '''
+        CREATE TABLE IF NOT EXISTS service_ratings(
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER NOT NULL,
+            order_id INTEGER NOT NULL,
+            target_type TEXT NOT NULL,
+            target_name TEXT,
+            rating INTEGER NOT NULL CHECK (rating >= 1 AND rating <= 5),
+            review TEXT,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE(user_id, order_id, target_type),
+            FOREIGN KEY(user_id) REFERENCES users(id),
+            FOREIGN KEY(order_id) REFERENCES orders(id)
+        )
+        '''
+    )
+    db.execute(
+        '''
+        CREATE TABLE IF NOT EXISTS rider_locations(
+            order_id INTEGER PRIMARY KEY,
+            lat REAL NOT NULL,
+            lng REAL NOT NULL,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY(order_id) REFERENCES orders(id)
+        )
+        '''
+    )
     ensure_staff_schema(db)
     ensure_orders_schema(db)
     ensure_performance_indexes(db)
@@ -194,6 +224,8 @@ def ensure_staff_schema(db):
 
 def ensure_performance_indexes(db):
     index_statements = [
+        "CREATE INDEX IF NOT EXISTS idx_users_lower_email ON users(LOWER(email))",
+        "CREATE INDEX IF NOT EXISTS idx_staff_users_lower_email_role_active ON staff_users(LOWER(email), role, is_active)",
         "CREATE INDEX IF NOT EXISTS idx_orders_user_created_at ON orders(user_id, created_at DESC)",
         "CREATE INDEX IF NOT EXISTS idx_orders_status ON orders(status)",
         "CREATE INDEX IF NOT EXISTS idx_orders_delivery_status ON orders(delivery_person, status)",
@@ -201,6 +233,8 @@ def ensure_performance_indexes(db):
         "CREATE INDEX IF NOT EXISTS idx_order_items_order_id ON order_items(order_id)",
         "CREATE INDEX IF NOT EXISTS idx_order_items_food_id ON order_items(food_id)",
         "CREATE INDEX IF NOT EXISTS idx_ratings_user_order ON ratings(user_id, order_id)",
+        "CREATE INDEX IF NOT EXISTS idx_service_ratings_user_order_target ON service_ratings(user_id, order_id, target_type)",
+        "CREATE INDEX IF NOT EXISTS idx_rider_locations_updated_at ON rider_locations(updated_at)",
     ]
     for statement in index_statements:
         db.execute(statement)
@@ -328,6 +362,10 @@ def status_to_socket_event(status):
         "Cancelled": "cancelled",
     }
     return status_map.get(status, "order_updated")
+
+
+def build_live_token(parts):
+    return json.dumps(parts, sort_keys=True, separators=(",", ":"))
 
 
 def emit_order_event(order_id, event_name=None, extra_payload=None):
@@ -673,14 +711,14 @@ def home():
 def register():
     if request.method == "POST":
         name = request.form.get("name")
-        email = request.form.get("email")
+        email = (request.form.get("email") or "").strip().lower()
         password = request.form.get("password")
 
         if not name or not email or not password:
             flash("All fields are required.", "danger")
             return redirect(url_for("register"))
 
-        existing = query_db("SELECT * FROM users WHERE email = ?", (email,), one=True)
+        existing = query_db("SELECT id FROM users WHERE LOWER(email) = ?", (email,), one=True)
         if existing:
             flash("Email already registered. Please log in.", "warning")
             return redirect(url_for("login"))
@@ -712,7 +750,7 @@ def login():
             flash("Email and password are required.", "danger")
             return redirect(url_for("login"))
 
-        user = query_db("SELECT id, name, email, password FROM users WHERE email = ?", (email,), one=True)
+        user = query_db("SELECT id, name, email, password FROM users WHERE LOWER(email) = ?", (email,), one=True)
         if user and check_password_hash(user["password"], password):
             session["user_id"] = user["id"]
             session["user_name"] = user["name"]
@@ -753,10 +791,28 @@ def customer_dashboard():
         (session["user_id"],),
         one=True,
     )
+    realtime_token = build_live_token(
+        {
+            "summary": {
+                "total": order_summary["total_orders"] or 0,
+                "active": order_summary["active_orders"] or 0,
+                "delivered": order_summary["delivered_orders"] or 0,
+            },
+            "orders": [
+                {
+                    "id": row["id"],
+                    "status": row["status"],
+                    "delivery_person": row["delivery_person"] or "",
+                }
+                for row in recent_orders
+            ],
+        }
+    )
     return render_template(
         "customer_dashboard.html",
         recent_orders=recent_orders,
         order_summary=order_summary,
+        realtime_token=realtime_token,
     )
 
 
@@ -783,7 +839,7 @@ def manager_login():
             return redirect(url_for("manager_login"))
 
         staff = query_db(
-            "SELECT id, name, email, role, password FROM staff_users WHERE email = ? AND role = 'manager' AND is_active = 1",
+            "SELECT id, name, email, role, password FROM staff_users WHERE LOWER(email) = ? AND role = 'manager' AND is_active = 1",
             (email,),
             one=True,
         )
@@ -821,7 +877,7 @@ def delivery_login():
             return redirect(url_for("delivery_login"))
 
         staff = query_db(
-            "SELECT id, name, email, role, password FROM staff_users WHERE email = ? AND role = 'delivery_partner' AND is_active = 1",
+            "SELECT id, name, email, role, password FROM staff_users WHERE LOWER(email) = ? AND role = 'delivery_partner' AND is_active = 1",
             (email,),
             one=True,
         )
@@ -1081,8 +1137,22 @@ def track_order(order_id):
         ''',
         (session["user_id"], order_id)
     )
+    service_ratings = query_db(
+        '''
+        SELECT target_type, target_name, rating, review
+        FROM service_ratings
+        WHERE user_id = ? AND order_id = ?
+        ''',
+        (session["user_id"], order_id),
+    )
+    service_rating_map = {row["target_type"]: row for row in service_ratings}
 
-    return render_template("track_order.html", order=order, order_items=order_items)
+    return render_template(
+        "track_order.html",
+        order=order,
+        order_items=order_items,
+        service_rating_map=service_rating_map,
+    )
 
 
 @app.route("/rate_item/<int:order_id>/<int:food_id>", methods=["POST"])
@@ -1138,6 +1208,71 @@ def rate_item(order_id, food_id):
     return redirect(url_for("track_order", order_id=order_id))
 
 
+@app.route("/rate_service/<int:order_id>", methods=["POST"])
+@login_required
+def rate_service(order_id):
+    order = query_db(
+        "SELECT id, status, delivery_person FROM orders WHERE id = ? AND user_id = ?",
+        (order_id, session["user_id"]),
+        one=True,
+    )
+    if not order or order["status"] != "Delivered":
+        flash("You can rate service only after delivery is completed.", "warning")
+        return redirect(url_for("track_order", order_id=order_id))
+
+    restaurant_rating_raw = request.form.get("restaurant_rating")
+    delivery_rating_raw = request.form.get("delivery_rating")
+    restaurant_review = (request.form.get("restaurant_review") or "").strip()
+    delivery_review = (request.form.get("delivery_review") or "").strip()
+
+    try:
+        restaurant_rating = int(restaurant_rating_raw)
+        delivery_rating = int(delivery_rating_raw)
+    except (TypeError, ValueError):
+        flash("Please select valid ratings between 1 and 5.", "danger")
+        return redirect(url_for("track_order", order_id=order_id))
+
+    if restaurant_rating not in (1, 2, 3, 4, 5) or delivery_rating not in (1, 2, 3, 4, 5):
+        flash("Ratings must be between 1 and 5.", "danger")
+        return redirect(url_for("track_order", order_id=order_id))
+
+    db = get_db()
+    db.execute(
+        '''
+        INSERT INTO service_ratings (user_id, order_id, target_type, target_name, rating, review, updated_at)
+        VALUES (?, ?, 'restaurant', 'FoodFlux Restaurant', ?, ?, CURRENT_TIMESTAMP)
+        ON CONFLICT(user_id, order_id, target_type)
+        DO UPDATE SET
+            rating = excluded.rating,
+            review = excluded.review,
+            updated_at = CURRENT_TIMESTAMP
+        ''',
+        (session["user_id"], order_id, restaurant_rating, restaurant_review),
+    )
+    db.execute(
+        '''
+        INSERT INTO service_ratings (user_id, order_id, target_type, target_name, rating, review, updated_at)
+        VALUES (?, ?, 'delivery_partner', ?, ?, ?, CURRENT_TIMESTAMP)
+        ON CONFLICT(user_id, order_id, target_type)
+        DO UPDATE SET
+            target_name = excluded.target_name,
+            rating = excluded.rating,
+            review = excluded.review,
+            updated_at = CURRENT_TIMESTAMP
+        ''',
+        (
+            session["user_id"],
+            order_id,
+            order["delivery_person"] or "Delivery Partner",
+            delivery_rating,
+            delivery_review,
+        ),
+    )
+    db.commit()
+    flash("Thanks! Service ratings saved.", "success")
+    return redirect(url_for("track_order", order_id=order_id))
+
+
 @app.route("/admin_login", methods=["GET", "POST"])
 def admin_login():
     return redirect(url_for("manager_login"))
@@ -1187,11 +1322,31 @@ def admin_dashboard():
         ORDER BY active_orders DESC, assigned_orders DESC
         '''
     )
+    realtime_token = build_live_token(
+        {
+            "stats": {
+                "total": order_stats["total_orders"] or 0,
+                "active": order_stats["active_orders"] or 0,
+                "delivered": order_stats["delivered_orders"] or 0,
+            },
+            "panel": [
+                {
+                    "delivery_person": row["delivery_person"],
+                    "latest_status": row["latest_status"],
+                    "active_orders": row["active_orders"] or 0,
+                    "delivered_orders": row["delivered_orders"] or 0,
+                    "assigned_orders": row["assigned_orders"] or 0,
+                }
+                for row in delivery_panel
+            ],
+        }
+    )
     return render_template(
         "manager_dashboard.html",
         foods=foods,
         order_stats=order_stats,
         delivery_panel=delivery_panel,
+        realtime_token=realtime_token,
     )
 
 
@@ -1220,7 +1375,17 @@ def admin_orders():
         ORDER BY o.created_at DESC
         '''
     )
-    return render_template("admin_orders.html", orders=orders)
+    realtime_token = build_live_token(
+        [
+            {
+                "id": row["id"],
+                "status": row["status"],
+                "delivery_person": row["delivery_person"] or "",
+            }
+            for row in orders
+        ]
+    )
+    return render_template("admin_orders.html", orders=orders, realtime_token=realtime_token)
 
 
 @app.route("/admin/foods", methods=["GET", "POST"])
@@ -1383,10 +1548,29 @@ def delivery_dashboard():
         (session.get("staff_name"),),
         one=True,
     )
+    realtime_token = build_live_token(
+        {
+            "stats": {
+                "total": delivery_stats["total_assigned"] or 0,
+                "accepted": delivery_stats["accepted_orders"] or 0,
+                "active": delivery_stats["active_orders"] or 0,
+                "delivered": delivery_stats["delivered_orders"] or 0,
+            },
+            "orders": [
+                {
+                    "id": row["id"],
+                    "status": row["status"],
+                    "delivery_accepted": row["delivery_accepted"] or 0,
+                }
+                for row in assigned_orders
+            ],
+        }
+    )
     return render_template(
         "delivery_dashboard.html",
         assigned_orders=assigned_orders,
         delivery_stats=delivery_stats,
+        realtime_token=realtime_token,
     )
 
 
@@ -1437,12 +1621,271 @@ def delivery_update_order_status(order_id, status):
     return redirect(url_for("delivery_dashboard"))
 
 
+@app.route("/api/rider/location", methods=["POST"])
+@delivery_required
+def save_rider_location():
+    try:
+        payload = request.get_json(silent=True) or {}
+        order_id = int(payload.get("order_id"))
+        lat = float(payload.get("lat"))
+        lng = float(payload.get("lng"))
+    except (TypeError, ValueError):
+        return jsonify({"ok": False, "error": "Invalid location payload."}), 400
+
+    order = query_db(
+        "SELECT id FROM orders WHERE id = ? AND delivery_person = ?",
+        (order_id, session.get("staff_name")),
+        one=True,
+    )
+    if not order:
+        return jsonify({"ok": False, "error": "Order not assigned."}), 403
+
+    db = get_db()
+    db.execute(
+        '''
+        INSERT INTO rider_locations (order_id, lat, lng, updated_at)
+        VALUES (?, ?, ?, CURRENT_TIMESTAMP)
+        ON CONFLICT(order_id)
+        DO UPDATE SET
+            lat = excluded.lat,
+            lng = excluded.lng,
+            updated_at = CURRENT_TIMESTAMP
+        ''',
+        (order_id, lat, lng),
+    )
+    db.commit()
+    return jsonify({"ok": True})
+
+
+@app.route("/api/live/customer/dashboard")
+@customer_required
+def live_customer_dashboard():
+    update_due_delivery_statuses()
+    recent_orders = query_db(
+        '''
+        SELECT id, status, delivery_person
+        FROM orders
+        WHERE user_id = ?
+        ORDER BY created_at DESC
+        LIMIT 6
+        ''',
+        (session["user_id"],),
+    )
+    order_summary = query_db(
+        '''
+        SELECT
+            COUNT(*) AS total_orders,
+            SUM(CASE WHEN status = 'Delivered' THEN 1 ELSE 0 END) AS delivered_orders,
+            SUM(CASE WHEN status NOT IN ('Delivered', 'Cancelled', 'Rejected') THEN 1 ELSE 0 END) AS active_orders
+        FROM orders
+        WHERE user_id = ?
+        ''',
+        (session["user_id"],),
+        one=True,
+    )
+    token = build_live_token(
+        {
+            "summary": {
+                "total": order_summary["total_orders"] or 0,
+                "active": order_summary["active_orders"] or 0,
+                "delivered": order_summary["delivered_orders"] or 0,
+            },
+            "orders": [
+                {
+                    "id": row["id"],
+                    "status": row["status"],
+                    "delivery_person": row["delivery_person"] or "",
+                }
+                for row in recent_orders
+            ],
+        }
+    )
+    return jsonify({"token": token})
+
+
+@app.route("/api/live/manager/dashboard")
+@admin_required
+def live_manager_dashboard():
+    update_due_delivery_statuses()
+    order_stats = query_db(
+        '''
+        SELECT
+            COUNT(*) AS total_orders,
+            SUM(CASE WHEN status = 'Delivered' THEN 1 ELSE 0 END) AS delivered_orders,
+            SUM(CASE WHEN status NOT IN ('Delivered', 'Cancelled', 'Rejected') THEN 1 ELSE 0 END) AS active_orders
+        FROM orders
+        ''',
+        one=True,
+    )
+    delivery_panel = query_db(
+        '''
+        SELECT
+            o.delivery_person,
+            COUNT(*) AS assigned_orders,
+            SUM(CASE WHEN o.status = 'Delivered' THEN 1 ELSE 0 END) AS delivered_orders,
+            SUM(CASE WHEN o.status NOT IN ('Delivered', 'Cancelled', 'Rejected') THEN 1 ELSE 0 END) AS active_orders,
+            COALESCE(
+                (
+                    SELECT o2.status
+                    FROM orders o2
+                    WHERE o2.delivery_person = o.delivery_person
+                    ORDER BY o2.created_at DESC
+                    LIMIT 1
+                ),
+                'Idle'
+            ) AS latest_status
+        FROM orders o
+        WHERE o.delivery_person IS NOT NULL AND TRIM(o.delivery_person) != ''
+        GROUP BY o.delivery_person
+        ORDER BY active_orders DESC, assigned_orders DESC
+        '''
+    )
+    token = build_live_token(
+        {
+            "stats": {
+                "total": order_stats["total_orders"] or 0,
+                "active": order_stats["active_orders"] or 0,
+                "delivered": order_stats["delivered_orders"] or 0,
+            },
+            "panel": [
+                {
+                    "delivery_person": row["delivery_person"],
+                    "latest_status": row["latest_status"],
+                    "active_orders": row["active_orders"] or 0,
+                    "delivered_orders": row["delivered_orders"] or 0,
+                    "assigned_orders": row["assigned_orders"] or 0,
+                }
+                for row in delivery_panel
+            ],
+        }
+    )
+    return jsonify({"token": token})
+
+
+@app.route("/api/live/manager/orders")
+@admin_required
+def live_manager_orders():
+    update_due_delivery_statuses()
+    orders = query_db(
+        '''
+        SELECT id, status, delivery_person
+        FROM orders
+        WHERE status NOT IN ('Delivered', 'Cancelled', 'Rejected')
+        ORDER BY created_at DESC
+        '''
+    )
+    token = build_live_token(
+        [
+            {
+                "id": row["id"],
+                "status": row["status"],
+                "delivery_person": row["delivery_person"] or "",
+            }
+            for row in orders
+        ]
+    )
+    return jsonify({"token": token})
+
+
+@app.route("/api/live/delivery/dashboard")
+@delivery_required
+def live_delivery_dashboard():
+    update_due_delivery_statuses()
+    assigned_orders = query_db(
+        '''
+        SELECT id, status, delivery_accepted
+        FROM orders
+        WHERE delivery_person = ?
+        ORDER BY created_at DESC
+        ''',
+        (session.get("staff_name"),),
+    )
+    delivery_stats = query_db(
+        '''
+        SELECT
+            COUNT(*) AS total_assigned,
+            SUM(CASE WHEN delivery_accepted = 1 THEN 1 ELSE 0 END) AS accepted_orders,
+            SUM(CASE WHEN status = 'Delivered' THEN 1 ELSE 0 END) AS delivered_orders,
+            SUM(CASE WHEN status NOT IN ('Delivered', 'Cancelled', 'Rejected') THEN 1 ELSE 0 END) AS active_orders
+        FROM orders
+        WHERE delivery_person = ?
+        ''',
+        (session.get("staff_name"),),
+        one=True,
+    )
+    token = build_live_token(
+        {
+            "stats": {
+                "total": delivery_stats["total_assigned"] or 0,
+                "accepted": delivery_stats["accepted_orders"] or 0,
+                "active": delivery_stats["active_orders"] or 0,
+                "delivered": delivery_stats["delivered_orders"] or 0,
+            },
+            "orders": [
+                {
+                    "id": row["id"],
+                    "status": row["status"],
+                    "delivery_accepted": row["delivery_accepted"] or 0,
+                }
+                for row in assigned_orders
+            ],
+        }
+    )
+    return jsonify({"token": token})
+
+
+@app.route("/api/live/order/<int:order_id>")
+@login_required
+def live_order(order_id):
+    update_due_delivery_statuses()
+    order = query_db(
+        '''
+        SELECT id, status, delivery_person, estimated_delivery_time, auto_delivered_at
+        FROM orders
+        WHERE id = ? AND user_id = ?
+        ''',
+        (order_id, session["user_id"]),
+        one=True,
+    )
+    if not order:
+        return jsonify({"error": "Order not found"}), 404
+
+    rider_location = query_db(
+        "SELECT lat, lng, updated_at FROM rider_locations WHERE order_id = ?",
+        (order_id,),
+        one=True,
+    )
+    return jsonify(
+        {
+            "id": order["id"],
+            "status": order["status"],
+            "delivery_person": order["delivery_person"],
+            "estimated_delivery_time": order["estimated_delivery_time"],
+            "auto_delivered_at": order["auto_delivered_at"],
+            "rider_location": {
+                "lat": rider_location["lat"],
+                "lng": rider_location["lng"],
+                "updated_at": rider_location["updated_at"],
+            }
+            if rider_location
+            else None,
+        }
+    )
+
+
 @app.route("/api/order/check/<int:order_id>")
 def check_order_status(order_id):
     update_due_delivery_statuses()
     order = query_db("SELECT * FROM orders WHERE id = ?", (order_id,), one=True)
     if order:
-        return jsonify({"status": order["status"], "id": order["id"]})
+        return jsonify(
+            {
+                "status": order["status"],
+                "id": order["id"],
+                "delivery_person": order["delivery_person"],
+                "estimated_delivery_time": order["estimated_delivery_time"],
+            }
+        )
     return jsonify({"status": "not_found", "id": order_id}), 404
 
 

@@ -1,5 +1,6 @@
 {% extends "base.html" %}
 {% block content %}
+<div class="js-track-live-watch" data-live-endpoint="{{ url_for('live_order', order_id=order.id) }}"></div>
 <div class="container mt-5">
     <div class="row justify-content-center">
         <div class="col-lg-8">
@@ -17,7 +18,7 @@
                             <p><strong>Delivery Address:</strong></p>
                             <p><small>{{ order.address }}</small></p>
                             <p><strong>Contact:</strong> {{ order.phone }}</p>
-                            <p><strong>Delivery Partner:</strong> {{ order.delivery_person or 'Assigning...' }}</p>
+                            <p><strong>Delivery Partner:</strong> <span id="trackDeliveryPartner">{{ order.delivery_person or 'Assigning...' }}</span></p>
                         </div>
                     </div>
                 </div>
@@ -64,7 +65,7 @@
             <div class="card shadow-sm mb-4 border-success fade-in" style="animation-delay: 0.3s;">
                 <div class="card-body text-center bg-light">
                     <h5 class="card-title mb-3">⏱️ Estimated Delivery Time</h5>
-                    <div class="timer-display" id="timerDisplay">
+                    <div class="timer-display" id="timerDisplay" data-estimated-delivery="{{ order.estimated_delivery_time or '' }}">
                         <span id="minutes">30</span>:<span id="seconds">00</span>
                     </div>
                     <p class="mt-3 mb-0" id="estimatedTime"></p>
@@ -119,6 +120,39 @@
                     </div>
                 </div>
             </div>
+
+            {% if order.status == 'Delivered' %}
+            <div class="card shadow-sm mb-4 fade-in" style="animation-delay: 0.65s;">
+                <div class="card-body">
+                    <h5 class="card-title mb-3">Rate Restaurant and Delivery</h5>
+                    <form method="post" action="{{ url_for('rate_service', order_id=order.id) }}" class="row g-3">
+                        <div class="col-md-6">
+                            <label class="form-label fw-semibold">Restaurant Rating</label>
+                            <select name="restaurant_rating" class="form-select" required>
+                                <option value="">Select</option>
+                                {% for score in range(1, 6) %}
+                                <option value="{{ score }}" {% if service_rating_map.get('restaurant') and service_rating_map.get('restaurant').rating == score %}selected{% endif %}>{{ score }} Star{% if score > 1 %}s{% endif %}</option>
+                                {% endfor %}
+                            </select>
+                            <input type="text" class="form-control mt-2" name="restaurant_review" maxlength="250" placeholder="Optional restaurant review" value="{{ service_rating_map.get('restaurant').review if service_rating_map.get('restaurant') else '' }}" />
+                        </div>
+                        <div class="col-md-6">
+                            <label class="form-label fw-semibold">Delivery Partner Rating</label>
+                            <select name="delivery_rating" class="form-select" required>
+                                <option value="">Select</option>
+                                {% for score in range(1, 6) %}
+                                <option value="{{ score }}" {% if service_rating_map.get('delivery_partner') and service_rating_map.get('delivery_partner').rating == score %}selected{% endif %}>{{ score }} Star{% if score > 1 %}s{% endif %}</option>
+                                {% endfor %}
+                            </select>
+                            <input type="text" class="form-control mt-2" name="delivery_review" maxlength="250" placeholder="Optional delivery review" value="{{ service_rating_map.get('delivery_partner').review if service_rating_map.get('delivery_partner') else '' }}" />
+                        </div>
+                        <div class="col-12">
+                            <button type="submit" class="btn btn-primary">Save Service Ratings</button>
+                        </div>
+                    </form>
+                </div>
+            </div>
+            {% endif %}
 
             <!-- Action Buttons -->
             <div class="card shadow-sm mb-4 fade-in" style="animation-delay: 0.7s;">
@@ -198,8 +232,12 @@
     };
 
     function parseDateTime(dateString) {
-        // Handle ISO format datetime strings
-        return new Date(dateString);
+        if (!dateString) {
+            return null;
+        }
+        const normalized = String(dateString).trim().replace(' ', 'T');
+        const parsed = new Date(normalized);
+        return Number.isNaN(parsed.getTime()) ? null : parsed;
     }
     
     const rawEstimatedDelivery = '{{ order.estimated_delivery_time or "" }}';
@@ -257,7 +295,7 @@
     updateTimer();
     timerInterval = setInterval(updateTimer, 1000);
     
-    // Socket-driven status updates are handled in static/js/main.js
+    // Polling-driven status updates are handled in static/js/main.js
     initRiderMap();
 </script>
 {% endblock %}
