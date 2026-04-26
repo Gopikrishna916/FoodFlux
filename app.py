@@ -23,8 +23,16 @@ socketio = SocketIO(app, cors_allowed_origins="*", async_mode="threading")
 app.config["SEND_FILE_MAX_AGE_DEFAULT"] = int(os.environ.get("STATIC_CACHE_SECONDS", "86400"))
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-DEFAULT_DATABASE_PATH = os.path.join("/tmp", "database.db") if os.environ.get("RENDER") else os.path.join(BASE_DIR, "database.db")
-DATABASE_PATH = os.environ.get("DATABASE_PATH", DEFAULT_DATABASE_PATH)
+if os.environ.get("DATABASE_PATH"):
+    DATABASE_PATH = os.environ.get("DATABASE_PATH")
+elif os.environ.get("RENDER"):
+    render_disk_path = os.environ.get("RENDER_DISK_MOUNT_PATH")
+    if render_disk_path:
+        DATABASE_PATH = os.path.join(render_disk_path, "database.db")
+    else:
+        DATABASE_PATH = os.path.join("/tmp", "database.db")
+else:
+    DATABASE_PATH = os.path.join(BASE_DIR, "database.db")
 UPLOAD_DIR = os.path.join(BASE_DIR, "static", "images")
 
 DB_INIT_LOCK = threading.Lock()
@@ -74,6 +82,9 @@ FOOD_CATALOG = [
 def get_db():
     db = getattr(g, "_database", None)
     if db is None:
+        db_dir = os.path.dirname(DATABASE_PATH)
+        if db_dir:
+            os.makedirs(db_dir, exist_ok=True)
         db = g._database = sqlite3.connect(DATABASE_PATH)
         db.row_factory = sqlite3.Row
     return db
