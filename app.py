@@ -105,6 +105,8 @@ def init_db():
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             name TEXT NOT NULL,
             email TEXT NOT NULL UNIQUE,
+            mobile_number TEXT,
+            mobile_verified INTEGER NOT NULL DEFAULT 0,
             password TEXT NOT NULL
         )
         '''
@@ -115,6 +117,7 @@ def init_db():
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             name TEXT NOT NULL,
             email TEXT NOT NULL UNIQUE,
+            mobile_number TEXT,
             password TEXT NOT NULL,
             role TEXT NOT NULL,
             is_active INTEGER NOT NULL DEFAULT 1,
@@ -217,6 +220,20 @@ def init_db():
         )
         '''
     )
+    db.execute(
+        '''
+        CREATE TABLE IF NOT EXISTS otp_codes(
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            recipient TEXT NOT NULL,
+            otp_code TEXT NOT NULL,
+            purpose TEXT NOT NULL,
+            expires_at TEXT NOT NULL,
+            used INTEGER NOT NULL DEFAULT 0,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+        '''
+    )
+    ensure_users_schema(db)
     ensure_staff_schema(db)
     ensure_orders_schema(db)
     ensure_performance_indexes(db)
@@ -228,6 +245,16 @@ def init_db():
     ensure_image_aliases()
 
 
+def ensure_users_schema(db):
+    user_columns = {col["name"] for col in db.execute("PRAGMA table_info(users)").fetchall()}
+    if not user_columns:
+        return
+    if "mobile_number" not in user_columns:
+        db.execute("ALTER TABLE users ADD COLUMN mobile_number TEXT")
+    if "mobile_verified" not in user_columns:
+        db.execute("ALTER TABLE users ADD COLUMN mobile_verified INTEGER NOT NULL DEFAULT 0")
+
+
 def ensure_staff_schema(db):
     staff_columns = {col["name"] for col in db.execute("PRAGMA table_info(staff_users)").fetchall()}
     if not staff_columns:
@@ -236,12 +263,18 @@ def ensure_staff_schema(db):
         db.execute("ALTER TABLE staff_users ADD COLUMN role TEXT NOT NULL DEFAULT 'manager'")
     if "is_active" not in staff_columns:
         db.execute("ALTER TABLE staff_users ADD COLUMN is_active INTEGER NOT NULL DEFAULT 1")
+    if "mobile_number" not in staff_columns:
+        db.execute("ALTER TABLE staff_users ADD COLUMN mobile_number TEXT")
 
 
 def ensure_performance_indexes(db):
     index_statements = [
         "CREATE INDEX IF NOT EXISTS idx_users_lower_email ON users(LOWER(email))",
+        "CREATE UNIQUE INDEX IF NOT EXISTS idx_users_mobile_unique ON users(mobile_number) WHERE mobile_number IS NOT NULL",
         "CREATE INDEX IF NOT EXISTS idx_staff_users_lower_email_role_active ON staff_users(LOWER(email), role, is_active)",
+        "CREATE UNIQUE INDEX IF NOT EXISTS idx_staff_users_mobile_unique ON staff_users(mobile_number) WHERE mobile_number IS NOT NULL",
+        "CREATE INDEX IF NOT EXISTS idx_otp_recipient_purpose_active ON otp_codes(recipient, purpose, used)",
+        "CREATE INDEX IF NOT EXISTS idx_otp_expires_at ON otp_codes(expires_at)",
         "CREATE INDEX IF NOT EXISTS idx_orders_user_created_at ON orders(user_id, created_at DESC)",
         "CREATE INDEX IF NOT EXISTS idx_orders_status ON orders(status)",
         "CREATE INDEX IF NOT EXISTS idx_orders_delivery_status ON orders(delivery_person, status)",
