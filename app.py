@@ -6,6 +6,7 @@ import base64
 import mimetypes
 import json
 import threading
+import random
 from io import BytesIO
 from datetime import datetime, timedelta
 from flask import Flask, render_template, request, redirect, url_for, flash, session, g, jsonify
@@ -648,6 +649,72 @@ def calculate_estimated_delivery():
     return delivery_time
 
 
+def normalize_mobile(mobile_number):
+    digits = re.sub(r"\D", "", mobile_number or "")
+    if len(digits) == 10:
+        return digits
+    return None
+
+
+def generate_otp_code():
+    return f"{random.randint(0, 999999):06d}"
+
+
+def create_otp_challenge(recipient, purpose, ttl_minutes=5):
+    otp_code = generate_otp_code()
+    expires_at = (datetime.now() + timedelta(minutes=ttl_minutes)).strftime("%Y-%m-%d %H:%M:%S")
+    db = get_db()
+    db.execute(
+        '''
+        UPDATE otp_codes
+        SET used = 1
+        WHERE recipient = ? AND purpose = ? AND used = 0
+        ''',
+        (recipient, purpose),
+    )
+    db.execute(
+        '''
+        INSERT INTO otp_codes (recipient, otp_code, purpose, expires_at, used)
+        VALUES (?, ?, ?, ?, 0)
+        ''',
+        (recipient, generate_password_hash(otp_code), purpose, expires_at),
+    )
+    db.commit()
+    return otp_code, expires_at
+
+
+def verify_otp_challenge(recipient, purpose, otp_code):
+    otp_row = query_db(
+        '''
+        SELECT id, otp_code, expires_at, used
+        FROM otp_codes
+        WHERE recipient = ? AND purpose = ?
+        ORDER BY id DESC
+        LIMIT 1
+        ''',
+        (recipient, purpose),
+        one=True,
+    )
+    if not otp_row or otp_row["used"]:
+        return False, "No active OTP challenge found."
+
+    now = datetime.now()
+    expires_at = datetime.strptime(otp_row["expires_at"], "%Y-%m-%d %H:%M:%S")
+    if now > expires_at:
+        db = get_db()
+        db.execute("UPDATE otp_codes SET used = 1 WHERE id = ?", (otp_row["id"],))
+        db.commit()
+        return False, "OTP expired. Please request a new code."
+
+    if not check_password_hash(otp_row["otp_code"], otp_code):
+        return False, "Invalid OTP code."
+
+    db = get_db()
+    db.execute("UPDATE otp_codes SET used = 1 WHERE id = ?", (otp_row["id"],))
+    db.commit()
+    return True, "OTP verified successfully."
+
+
 def validate_payment_and_details(form, payment_method):
     """Validate payment inputs for each method and return sanitized summary."""
     method = (payment_method or "").strip()
@@ -794,6 +861,77 @@ def register():
         return redirect(url_for("login"))
 
     return render_template("register.html")
+
+
+@app.route("/api/auth/otp/request", methods=["POST"])
+def request_otp():
+    payload = request.get_json(silent=True) or request.form
+    purpose = (payload.get("purpose") or "login").strip().lower()
+    mobile_number = normalize_mobile(payload.get("mobile_number"))
+
+    if purpose not in ("register", "login"):
+        return jsonify({"ok": False, "error": "Invalid OTP purpose."}), 400
+    if not mobile_number:
+        return jsonify({"ok": False, "error": "Enter a valid 10-digit mobile number."}), 400
+
+    if purpose == "register":
+        existing_user = query_db(
+            "SELECT id FROM users WHERE mobile_number = ?",
+            (mobile_number,),
+            one=True,
+        )
+        if existing_user:
+            return jsonify({"ok": False, "error": "Mobile number already registered."}), 409
+    else:
+        existing_user = query_db(
+            "SELECT id FROM users WHERE mobile_number = ?",
+            (mobile_number,),
+            one=True,
+        )
+        if not existing_user:
+            return jsonify({"ok": False, "error": "Mobile number is not registered."}), 404
+
+    otp_code, expires_at = create_otp_challenge(mobile_number, purpose)
+    session["otp_challenge_mobile"] = mobile_number
+    session["otp_challenge_purpose"] = purpose
+
+    response_payload = {
+        "ok": True,
+        "message": "OTP generated successfully.",
+        "expires_at": expires_at,
+    }
+    if not os.environ.get("RENDER"):
+        response_payload["dev_otp"] = otp_code
+    return jsonify(response_payload)
+
+
+@app.route("/api/auth/otp/verify", methods=["POST"])
+def verify_otp():
+    payload = request.get_json(silent=True) or request.form
+    purpose = (payload.get("purpose") or "login").strip().lower()
+    mobile_number = normalize_mobile(payload.get("mobile_number"))
+    otp_code = (payload.get("otp_code") or "").strip()
+
+    if purpose not in ("register", "login"):
+        return jsonify({"ok": False, "error": "Invalid OTP purpose."}), 400
+    if not mobile_number:
+        return jsonify({"ok": False, "error": "Enter a valid 10-digit mobile number."}), 400
+    if not re.match(r"^[0-9]{6}$", otp_code):
+        return jsonify({"ok": False, "error": "OTP must be a 6-digit code."}), 400
+
+    challenge_mobile = session.get("otp_challenge_mobile")
+    challenge_purpose = session.get("otp_challenge_purpose")
+    if challenge_mobile != mobile_number or challenge_purpose != purpose:
+        return jsonify({"ok": False, "error": "OTP challenge mismatch. Please request a new OTP."}), 409
+
+    verified, message = verify_otp_challenge(mobile_number, purpose, otp_code)
+    if not verified:
+        return jsonify({"ok": False, "error": message}), 400
+
+    session["otp_verified_mobile"] = mobile_number
+    session["otp_verified_purpose"] = purpose
+    session["otp_verified_at"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    return jsonify({"ok": True, "message": message})
 
 
 @app.route("/login", methods=["GET", "POST"])
