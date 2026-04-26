@@ -3,9 +3,9 @@ services:
     name: foodflux
     env: python
     plan: free
-    healthCheckPath: /healthz
+    healthCheckPath: /health
     buildCommand: pip install -r requirements.txt
-    startCommand: gunicorn --bind 0.0.0.0:$PORT --workers 1 --threads 8 --timeout 120 wsgi:app
+    startCommand: gunicorn --bind 0.0.0.0:$PORT --workers 1 --threads 8 --timeout 120 app:app
     envVars:
       - key: PYTHON_VERSION
         value: 3.10.9

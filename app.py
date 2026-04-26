@@ -5,6 +5,7 @@ import sqlite3
 import base64
 import mimetypes
 import json
+import threading
 from io import BytesIO
 from datetime import datetime, timedelta
 from flask import Flask, render_template, request, redirect, url_for, flash, session, g, jsonify
@@ -22,8 +23,12 @@ socketio = SocketIO(app, cors_allowed_origins="*", async_mode="threading")
 app.config["SEND_FILE_MAX_AGE_DEFAULT"] = int(os.environ.get("STATIC_CACHE_SECONDS", "86400"))
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-DATABASE_PATH = os.path.join(BASE_DIR, "database.db")
+DEFAULT_DATABASE_PATH = os.path.join("/tmp", "database.db") if os.environ.get("RENDER") else os.path.join(BASE_DIR, "database.db")
+DATABASE_PATH = os.environ.get("DATABASE_PATH", DEFAULT_DATABASE_PATH)
 UPLOAD_DIR = os.path.join(BASE_DIR, "static", "images")
+
+DB_INIT_LOCK = threading.Lock()
+DB_INIT_DONE = False
 
 ADMIN_EMAIL = os.environ.get("ADMIN_EMAIL", "admin@ckfood.com")
 ADMIN_PASSWORD = os.environ.get("ADMIN_PASSWORD", "admin123")
@@ -660,8 +665,22 @@ def validate_payment_and_details(form, payment_method):
     return None, "Invalid payment method selected."
 
 
-with app.app_context():
-    init_db()
+def ensure_db_ready():
+    global DB_INIT_DONE
+    if DB_INIT_DONE:
+        return
+    with DB_INIT_LOCK:
+        if DB_INIT_DONE:
+            return
+        init_db()
+        DB_INIT_DONE = True
+
+
+@app.before_request
+def bootstrap_database_if_needed():
+    if request.endpoint in ("health", "healthz", "static"):
+        return
+    ensure_db_ready()
 
 
 @app.context_processor
@@ -926,6 +945,11 @@ def menu():
 @app.route("/healthz")
 def healthz():
     return jsonify({"status": "ok"}), 200
+
+
+@app.route("/health")
+def health():
+    return "OK", 200
 
 
 @app.route("/add_to_cart/<int:food_id>")
@@ -1891,4 +1915,4 @@ def check_order_status(order_id):
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))
-    socketio.run(app, host="0.0.0.0", port=port, debug=True)
+    app.run(host="0.0.0.0", port=port)
