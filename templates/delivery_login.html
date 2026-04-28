@@ -48,6 +48,40 @@
                 </div>
             </div>
         </div>
+
+        <div class="card shadow-sm mt-4">
+            <div class="card-body p-4 p-md-4">
+                <div class="d-flex justify-content-between align-items-center mb-3 flex-wrap gap-2">
+                    <div>
+                        <h3 class="h5 mb-1">Mobile Delivery Login</h3>
+                        <p class="text-muted mb-0">Sign in with your registered mobile and password.</p>
+                    </div>
+                    <span class="badge bg-info-subtle text-info">Delivery</span>
+                </div>
+
+                <form id="deliveryMobileLoginForm" class="js-mobile-auth-form" data-purpose="staff_login" data-role="delivery_partner">
+                    <input type="hidden" name="purpose" value="staff_login" />
+                    <input type="hidden" name="role" value="delivery_partner" />
+                    <div class="mb-3">
+                        <label class="form-label">Mobile Number</label>
+                        <div class="input-group auth-input-group">
+                            <span class="input-group-text"><i class="bi bi-phone"></i></span>
+                            <input type="tel" name="mobile_number" class="form-control" placeholder="10-digit mobile number" maxlength="10" required />
+                            <button type="button" class="btn btn-outline-primary js-request-otp">Send OTP</button>
+                        </div>
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label">Password</label>
+                        <input type="password" name="password" class="form-control js-password-input" placeholder="Enter password" required />
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label">OTP</label>
+                        <input type="text" name="otp_code" class="form-control" placeholder="6-digit OTP" maxlength="6" inputmode="numeric" />
+                    </div>
+                    <button type="submit" class="btn btn-dark w-100">Login with Mobile</button>
+                </form>
+            </div>
+        </div>
     </div>
 </div>
 {% endblock %}

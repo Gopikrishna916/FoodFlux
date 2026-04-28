@@ -52,7 +52,7 @@
                         <span class="old-price">₹{{ "%.2f" | format(original_price) }}</span>
                         {% endif %}
                     </div>
-                    <a href="{{ url_for('add_to_cart', food_id=food.id) }}" class="btn btn-primary btn-sm">Add to Cart</a>
+                    <a href="{{ url_for('add_to_cart', food_id=food.id) }}" class="btn btn-primary btn-sm js-add-to-cart" data-cart-add-url="{{ url_for('add_to_cart', food_id=food.id) }}" data-food-id="{{ food.id }}">Add to Cart</a>
                 </div>
             </div>
         </div>

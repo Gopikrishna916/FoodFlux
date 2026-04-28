@@ -40,6 +40,55 @@
 
 <div class="card shadow-sm mb-4">
     <div class="card-body">
+        <div class="d-flex justify-content-between align-items-center mb-3 flex-wrap gap-2">
+            <div>
+                <h3 class="h5 mb-1">Create Restaurant or Delivery Partner</h3>
+                <p class="text-muted mb-0">Verify a mobile number with OTP, then set the account password.</p>
+            </div>
+            <span class="badge bg-warning-subtle text-warning">Admin only</span>
+        </div>
+
+        <form id="staffOnboardForm" class="js-mobile-auth-form" data-purpose="staff_onboard">
+            <input type="hidden" name="purpose" value="staff_onboard" />
+            <div class="row g-3">
+                <div class="col-md-4">
+                    <label class="form-label">Name</label>
+                    <input type="text" name="full_name" class="form-control" placeholder="Restaurant or partner name" required />
+                </div>
+                <div class="col-md-3">
+                    <label class="form-label">Role</label>
+                    <select name="role" class="form-select" required>
+                        <option value="">Choose role</option>
+                        <option value="manager">Restaurant</option>
+                        <option value="delivery_partner">Delivery Partner</option>
+                    </select>
+                </div>
+                <div class="col-md-3">
+                    <label class="form-label">Mobile Number</label>
+                    <div class="input-group">
+                        <span class="input-group-text">+91</span>
+                        <input type="tel" name="mobile_number" class="form-control" placeholder="10-digit mobile" maxlength="10" required />
+                        <button type="button" class="btn btn-outline-primary js-request-otp">Send OTP</button>
+                    </div>
+                </div>
+                <div class="col-md-2">
+                    <label class="form-label">OTP</label>
+                    <input type="text" name="otp_code" class="form-control" placeholder="OTP" maxlength="6" inputmode="numeric" />
+                </div>
+                <div class="col-md-4">
+                    <label class="form-label">Password</label>
+                    <input type="password" name="password" class="form-control" placeholder="Set a password" required />
+                </div>
+            </div>
+            <div class="d-flex justify-content-end mt-3">
+                <button type="submit" class="btn btn-dark">Create Staff Account</button>
+            </div>
+        </form>
+    </div>
+</div>
+
+<div class="card shadow-sm mb-4">
+    <div class="card-body">
         <div class="d-flex justify-content-between align-items-center mb-3">
             <h3 class="h5 mb-0">Delivery Panel Status</h3>
             <small class="text-muted">Live snapshot</small>

@@ -118,6 +118,354 @@ document.addEventListener("DOMContentLoaded", function () {
         });
     }
 
+    function formatCurrency(amount) {
+        return `₹${Number(amount || 0).toFixed(2)}`;
+    }
+
+    function postJson(url, payload) {
+        return fetch(url, {
+            method: "POST",
+            credentials: "same-origin",
+            headers: {
+                "Content-Type": "application/json",
+                "X-Requested-With": "XMLHttpRequest",
+            },
+            body: JSON.stringify(payload || {}),
+        }).then(async (response) => {
+            const data = await response.json().catch(() => ({}));
+            if (!response.ok) {
+                throw new Error(data.error || data.message || "Request failed.");
+            }
+            return data;
+        });
+    }
+
+    function syncCartState(payload) {
+        const count = Number(payload && payload.count ? payload.count : 0);
+        const total = Number(payload && payload.total ? payload.total : 0);
+        const items = Array.isArray(payload && payload.items) ? payload.items : [];
+
+        const cartBadges = document.querySelectorAll(".cart-badge");
+        cartBadges.forEach((badge) => {
+            badge.textContent = String(count);
+        });
+
+        const floatingBar = document.getElementById("floatingCartBar");
+        const summary = document.getElementById("floatingCartSummary");
+        const drawerTotal = document.getElementById("cartDrawerTotal");
+        const drawerItems = document.getElementById("cartDrawerItems");
+        const drawerEmpty = document.getElementById("cartDrawerEmpty");
+
+        if (floatingBar) {
+            floatingBar.classList.toggle("d-none", count < 1);
+        }
+        if (summary) {
+            summary.textContent = `${count} item${count === 1 ? "" : "s"} • ${formatCurrency(total)}`;
+        }
+        if (drawerTotal) {
+            drawerTotal.textContent = formatCurrency(total);
+        }
+
+        if (drawerItems) {
+            if (!items.length) {
+                drawerItems.innerHTML = "";
+                if (drawerEmpty) {
+                    drawerEmpty.classList.remove("d-none");
+                }
+            } else {
+                if (drawerEmpty) {
+                    drawerEmpty.classList.add("d-none");
+                }
+                drawerItems.innerHTML = items
+                    .map((item) => {
+                        const imageUrl = item.image && item.image.startsWith("http")
+                            ? item.image
+                            : `/static/${item.image}`;
+                        return `
+                            <div class="cart-drawer-item" data-food-id="${item.food_id}">
+                                <img src="${imageUrl}" alt="${item.name}" class="cart-drawer-item__image" onerror="this.onerror=null;this.src='/static/images/hero.svg';" />
+                                <div class="cart-drawer-item__body">
+                                    <div class="d-flex justify-content-between gap-2 align-items-start">
+                                        <div>
+                                            <div class="cart-drawer-item__title">${item.name}</div>
+                                            <div class="cart-drawer-item__meta">${formatCurrency(item.price)} each</div>
+                                        </div>
+                                        <button type="button" class="btn btn-link text-danger p-0 js-cart-remove" data-food-id="${item.food_id}">Remove</button>
+                                    </div>
+                                    <div class="d-flex justify-content-between align-items-center mt-3">
+                                        <div class="qty-stepper qty-stepper--compact">
+                                            <button type="button" class="qty-btn js-cart-qty-btn" data-action="minus" data-food-id="${item.food_id}">-</button>
+                                            <input type="number" class="form-control form-control-sm qty-input js-cart-qty-input" min="1" max="99" value="${item.qty}" data-food-id="${item.food_id}" />
+                                            <button type="button" class="qty-btn js-cart-qty-btn" data-action="plus" data-food-id="${item.food_id}">+</button>
+                                        </div>
+                                        <strong>${formatCurrency(item.subtotal)}</strong>
+                                    </div>
+                                </div>
+                            </div>
+                        `;
+                    })
+                    .join("");
+            }
+        }
+    }
+
+    function fetchCartState() {
+        const endpoint = document.body.getAttribute("data-cart-state-endpoint");
+        if (!endpoint) {
+            return Promise.resolve();
+        }
+
+        return fetch(endpoint, {
+            method: "GET",
+            credentials: "same-origin",
+            headers: { "X-Requested-With": "XMLHttpRequest" },
+        })
+            .then((response) => {
+                if (!response.ok) {
+                    throw new Error("Cart state fetch failed");
+                }
+                return response.json();
+            })
+            .then((payload) => {
+                if (payload && payload.ok) {
+                    syncCartState(payload);
+                }
+            })
+            .catch(function () {
+                // Ignore transient cart sync errors.
+            });
+    }
+
+    function bindCartActions() {
+        document.addEventListener("click", function (event) {
+            const addLink = event.target.closest(".js-add-to-cart");
+            if (addLink) {
+                event.preventDefault();
+                const url = addLink.getAttribute("data-cart-add-url") || addLink.getAttribute("href");
+                if (!url) {
+                    return;
+                }
+                fetch(url, {
+                    method: "GET",
+                    credentials: "same-origin",
+                    headers: { "X-Requested-With": "XMLHttpRequest" },
+                })
+                    .then((response) => response.json())
+                    .then((payload) => {
+                        if (payload && payload.ok) {
+                            syncCartState(payload);
+                            showLiveToast("Cart updated", payload.message || "Item added to cart.", "alert-success");
+                        }
+                    })
+                    .catch(function () {
+                        window.location.href = url;
+                    });
+                return;
+            }
+
+            const qtyButton = event.target.closest(".js-cart-qty-btn");
+            if (qtyButton) {
+                event.preventDefault();
+                const foodId = qtyButton.getAttribute("data-food-id");
+                const action = qtyButton.getAttribute("data-action");
+                const row = qtyButton.closest(".cart-drawer-item");
+                const input = row ? row.querySelector(".js-cart-qty-input") : null;
+                const currentQty = input ? parseInt(input.value || "1", 10) : 1;
+                const nextQty = action === "minus" ? currentQty - 1 : currentQty + 1;
+
+                postJson("/api/cart/update", { food_id: foodId, quantity: nextQty })
+                    .then((payload) => {
+                        syncCartState(payload);
+                    })
+                    .catch(function (error) {
+                        showLiveToast("Cart error", error.message, "alert-danger");
+                    });
+                return;
+            }
+
+            const removeButton = event.target.closest(".js-cart-remove");
+            if (removeButton) {
+                event.preventDefault();
+                const foodId = removeButton.getAttribute("data-food-id");
+                postJson("/api/cart/update", { food_id: foodId, quantity: 0 })
+                    .then((payload) => {
+                        syncCartState(payload);
+                    })
+                    .catch(function (error) {
+                        showLiveToast("Cart error", error.message, "alert-danger");
+                    });
+            }
+        });
+
+        document.addEventListener("input", function (event) {
+            const qtyInput = event.target.closest(".js-cart-qty-input");
+            if (!qtyInput) {
+                return;
+            }
+            const foodId = qtyInput.getAttribute("data-food-id");
+            const quantity = parseInt(qtyInput.value || "1", 10);
+            if (Number.isNaN(quantity)) {
+                return;
+            }
+            postJson("/api/cart/update", { food_id: foodId, quantity })
+                .then((payload) => {
+                    syncCartState(payload);
+                })
+                .catch(function (error) {
+                    showLiveToast("Cart error", error.message, "alert-danger");
+                });
+        });
+    }
+
+    function requestOtpForForm(form, requestButton) {
+        const formData = new FormData(form);
+        const purpose = (formData.get("purpose") || form.getAttribute("data-purpose") || "login").toString();
+        const mobileNumber = (formData.get("mobile_number") || "").toString().trim();
+        const role = (formData.get("role") || form.getAttribute("data-role") || "").toString().trim();
+        const payload = { purpose, mobile_number: mobileNumber };
+
+        if (role) {
+            payload.role = role;
+        }
+
+        if (!mobileNumber) {
+            showLiveToast("OTP request failed", "Enter a valid mobile number.", "alert-danger");
+            return;
+        }
+
+        requestButton.disabled = true;
+        postJson("/api/auth/otp/request", payload)
+            .then((response) => {
+                showLiveToast("OTP sent", response.message || "OTP generated successfully.", "alert-success");
+                if (response.dev_otp) {
+                    showLiveToast("Development OTP", `Use code ${response.dev_otp} while testing locally.`, "alert-info");
+                }
+            })
+            .catch(function (error) {
+                showLiveToast("OTP request failed", error.message, "alert-danger");
+            })
+            .finally(function () {
+                window.setTimeout(function () {
+                    requestButton.disabled = false;
+                }, 30000);
+            });
+    }
+
+    function submitMobileAuthForm(form) {
+        const formData = new FormData(form);
+        const purpose = (formData.get("purpose") || form.getAttribute("data-purpose") || "login").toString();
+        const mobileNumber = (formData.get("mobile_number") || "").toString().trim();
+        const otpCode = (formData.get("otp_code") || "").toString().trim();
+        const role = (formData.get("role") || form.getAttribute("data-role") || "").toString().trim();
+        const password = (formData.get("password") || "").toString();
+        const fullName = (formData.get("full_name") || formData.get("name") || "").toString().trim();
+
+        const sharedPayload = { purpose, mobile_number: mobileNumber };
+        if (role) {
+            sharedPayload.role = role;
+        }
+
+        function verifyOtpIfNeeded() {
+            if (!otpCode) {
+                return Promise.resolve();
+            }
+            return postJson("/api/auth/otp/verify", { ...sharedPayload, otp_code: otpCode });
+        }
+
+        function finalizeRequest() {
+            if (purpose === "register") {
+                return postJson("/api/auth/mobile/register", {
+                    full_name: fullName,
+                    mobile_number: mobileNumber,
+                    password,
+                });
+            }
+
+            if (purpose === "staff_onboard") {
+                return postJson("/api/admin/staff/onboard", {
+                    name: fullName,
+                    mobile_number: mobileNumber,
+                    password,
+                    role,
+                });
+            }
+
+            if (purpose === "staff_login") {
+                if (otpCode) {
+                    return postJson("/api/auth/staff/mobile/login-otp", {
+                        mobile_number: mobileNumber,
+                        role,
+                    });
+                }
+                return postJson("/api/auth/staff/mobile/login", {
+                    mobile_number: mobileNumber,
+                    password,
+                    role,
+                });
+            }
+
+            if (otpCode) {
+                return postJson("/api/auth/mobile/login-otp", {
+                    mobile_number: mobileNumber,
+                });
+            }
+            return postJson("/api/auth/mobile/login", {
+                mobile_number: mobileNumber,
+                password,
+            });
+        }
+
+        if (!mobileNumber) {
+            showLiveToast("Missing mobile number", "Enter a valid mobile number.", "alert-danger");
+            return;
+        }
+
+        if (purpose === "staff_onboard" && !otpCode) {
+            showLiveToast("OTP required", "Verify the mobile number before creating the staff account.", "alert-danger");
+            return;
+        }
+
+        verifyOtpIfNeeded()
+            .then(finalizeRequest)
+            .then((response) => {
+                if (response && response.message) {
+                    showLiveToast("Success", response.message, "alert-success");
+                }
+                if (response && response.redirect) {
+                    window.location.href = response.redirect;
+                    return;
+                }
+                if (purpose === "staff_onboard") {
+                    form.reset();
+                    fetchCartState();
+                }
+            })
+            .catch(function (error) {
+                showLiveToast("Request failed", error.message, "alert-danger");
+            });
+    }
+
+    function initMobileAuthForms() {
+        const forms = document.querySelectorAll(".js-mobile-auth-form");
+        if (!forms.length) {
+            return;
+        }
+
+        forms.forEach((form) => {
+            const requestButton = form.querySelector(".js-request-otp");
+            if (requestButton) {
+                requestButton.addEventListener("click", function () {
+                    requestOtpForForm(form, requestButton);
+                });
+            }
+
+            form.addEventListener("submit", function (event) {
+                event.preventDefault();
+                submitMobileAuthForm(form);
+            });
+        });
+    }
+
     function initQtySteppers() {
         const controls = document.querySelectorAll(".qty-stepper");
         controls.forEach((wrapper) => {
@@ -648,9 +996,12 @@ document.addEventListener("DOMContentLoaded", function () {
     initTheme();
     initScrollReveal();
     initWishlistButtons();
+    bindCartActions();
     initQtySteppers();
+    initMobileAuthForms();
     initEnhancedLoginForms();
     initRoutePrefetch();
+    fetchCartState();
     initDashboardPolling();
     initTrackOrderPolling();
     initDeliveryLocationSync();

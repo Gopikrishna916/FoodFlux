@@ -41,16 +41,21 @@ DB_INIT_DONE = False
 
 ADMIN_EMAIL = os.environ.get("ADMIN_EMAIL", "admin@ckfood.com")
 ADMIN_PASSWORD = os.environ.get("ADMIN_PASSWORD", "admin123")
+MANAGER_MOBILE = os.environ.get("MANAGER_MOBILE", "9000000001")
 
 MANAGER_EMAIL = os.environ.get("MANAGER_EMAIL", ADMIN_EMAIL)
 MANAGER_PASSWORD = os.environ.get("MANAGER_PASSWORD", ADMIN_PASSWORD)
+OTP_REQUEST_COOLDOWN_SECONDS = 30
+OTP_MAX_REQUESTS = 5
+OTP_REQUEST_WINDOW_MINUTES = 15
+OTP_MAX_VERIFY_ATTEMPTS = 5
 
 DELIVERY_STAFF = [
-    ("Rahul Sharma", "rahul@ckfood.com", "delivery123"),
-    ("Amit Verma", "amit@ckfood.com", "delivery123"),
-    ("Suresh Kumar", "suresh@ckfood.com", "delivery123"),
-    ("Vikram Singh", "vikram@ckfood.com", "delivery123"),
-    ("Imran Khan", "imran@ckfood.com", "delivery123"),
+    ("Rahul Sharma", "rahul@ckfood.com", "delivery123", "9000000002"),
+    ("Amit Verma", "amit@ckfood.com", "delivery123", "9000000003"),
+    ("Suresh Kumar", "suresh@ckfood.com", "delivery123", "9000000004"),
+    ("Vikram Singh", "vikram@ckfood.com", "delivery123", "9000000005"),
+    ("Imran Khan", "imran@ckfood.com", "delivery123", "9000000006"),
 ]
 
 DELIVERY_TEAM = [
@@ -266,6 +271,8 @@ def ensure_staff_schema(db):
         db.execute("ALTER TABLE staff_users ADD COLUMN is_active INTEGER NOT NULL DEFAULT 1")
     if "mobile_number" not in staff_columns:
         db.execute("ALTER TABLE staff_users ADD COLUMN mobile_number TEXT")
+    if "mobile_verified" not in staff_columns:
+        db.execute("ALTER TABLE staff_users ADD COLUMN mobile_verified INTEGER NOT NULL DEFAULT 0")
 
 
 def ensure_performance_indexes(db):
@@ -292,23 +299,40 @@ def ensure_performance_indexes(db):
 
 def seed_staff_users(db):
     manager_password_hash = generate_password_hash(MANAGER_PASSWORD)
-    existing_staff_rows = db.execute("SELECT email FROM staff_users").fetchall()
+    manager_mobile = normalize_mobile(MANAGER_MOBILE) or MANAGER_MOBILE
+    existing_staff_rows = db.execute("SELECT email, mobile_number FROM staff_users").fetchall()
     existing_emails = {row["email"].lower() for row in existing_staff_rows}
+    existing_mobiles = {normalize_mobile(row["mobile_number"]) for row in existing_staff_rows if row["mobile_number"]}
+    existing_mobiles.discard(None)
 
     if MANAGER_EMAIL.lower() not in existing_emails:
         db.execute(
-            "INSERT INTO staff_users (name, email, password, role) VALUES (?, ?, ?, ?)",
-            ("Hotel Manager", MANAGER_EMAIL, manager_password_hash, "manager"),
+            "INSERT INTO staff_users (name, email, mobile_number, mobile_verified, password, role) VALUES (?, ?, ?, 1, ?, ?)",
+            ("Hotel Manager", MANAGER_EMAIL, manager_mobile, manager_password_hash, "manager"),
         )
         existing_emails.add(MANAGER_EMAIL.lower())
+        existing_mobiles.add(manager_mobile)
+    elif manager_mobile not in existing_mobiles:
+        db.execute(
+            "UPDATE staff_users SET mobile_number = ?, mobile_verified = 1 WHERE LOWER(email) = ? AND (mobile_number IS NULL OR TRIM(mobile_number) = '')",
+            (manager_mobile, MANAGER_EMAIL.lower()),
+        )
+        existing_mobiles.add(manager_mobile)
 
-    for name, email, password in DELIVERY_STAFF:
+    for name, email, password, mobile_number in DELIVERY_STAFF:
         if email.lower() not in existing_emails:
             db.execute(
-                "INSERT INTO staff_users (name, email, password, role) VALUES (?, ?, ?, ?)",
-                (name, email, generate_password_hash(password), "delivery_partner"),
+                "INSERT INTO staff_users (name, email, mobile_number, mobile_verified, password, role) VALUES (?, ?, ?, 1, ?, ?)",
+                (name, email, mobile_number, generate_password_hash(password), "delivery_partner"),
             )
             existing_emails.add(email.lower())
+            existing_mobiles.add(mobile_number)
+        elif mobile_number not in existing_mobiles:
+            db.execute(
+                "UPDATE staff_users SET mobile_number = ?, mobile_verified = 1 WHERE LOWER(email) = ? AND (mobile_number IS NULL OR TRIM(mobile_number) = '')",
+                (mobile_number, email.lower()),
+            )
+            existing_mobiles.add(mobile_number)
 
 
 def ensure_orders_schema(db):
@@ -680,10 +704,26 @@ def create_otp_challenge(recipient, purpose, ttl_minutes=5):
         (recipient, generate_password_hash(otp_code), purpose, expires_at),
     )
     db.commit()
+    reset_otp_attempts(recipient, purpose)
     return otp_code, expires_at
 
 
 def verify_otp_challenge(recipient, purpose, otp_code):
+    attempt_count = increment_otp_attempt(recipient, purpose)
+    if attempt_count > OTP_MAX_VERIFY_ATTEMPTS:
+        db = get_db()
+        db.execute(
+            '''
+            UPDATE otp_codes
+            SET used = 1
+            WHERE recipient = ? AND purpose = ? AND used = 0
+            ''',
+            (recipient, purpose),
+        )
+        db.commit()
+        reset_otp_attempts(recipient, purpose)
+        return False, "Too many OTP attempts. Please request a new code."
+
     otp_row = query_db(
         '''
         SELECT id, otp_code, expires_at, used
@@ -712,6 +752,7 @@ def verify_otp_challenge(recipient, purpose, otp_code):
     db = get_db()
     db.execute("UPDATE otp_codes SET used = 1 WHERE id = ?", (otp_row["id"],))
     db.commit()
+    reset_otp_attempts(recipient, purpose)
     return True, "OTP verified successfully."
 
 
@@ -737,9 +778,13 @@ def get_verified_mobile_for_purpose(purpose, max_age_minutes=10):
 def clear_otp_session():
     session.pop("otp_challenge_mobile", None)
     session.pop("otp_challenge_purpose", None)
+    session.pop("otp_challenge_role", None)
     session.pop("otp_verified_mobile", None)
     session.pop("otp_verified_purpose", None)
+    session.pop("otp_verified_role", None)
     session.pop("otp_verified_at", None)
+    session.pop("otp_rate_state", None)
+    session.pop("otp_verify_attempts", None)
 
 
 def generate_mobile_shadow_email(mobile_number):
@@ -748,6 +793,116 @@ def generate_mobile_shadow_email(mobile_number):
     if not existing:
         return base_email
     return f"mobile_{mobile_number}_{int(datetime.now().timestamp())}@foodflux.local"
+
+
+def otp_state_key(recipient, purpose):
+    return f"{purpose}:{recipient}"
+
+
+def get_otp_rate_state():
+    state = session.get("otp_rate_state", {})
+    return state if isinstance(state, dict) else {}
+
+
+def set_otp_rate_state(state):
+    session["otp_rate_state"] = state
+    session.modified = True
+
+
+def can_request_otp(recipient, purpose):
+    state = get_otp_rate_state()
+    key = otp_state_key(recipient, purpose)
+    record = state.get(key, {})
+    now = datetime.now()
+
+    last_requested_at = record.get("last_requested_at")
+    if last_requested_at:
+        try:
+            last_requested = datetime.strptime(last_requested_at, "%Y-%m-%d %H:%M:%S")
+            if (now - last_requested).total_seconds() < OTP_REQUEST_COOLDOWN_SECONDS:
+                remaining = OTP_REQUEST_COOLDOWN_SECONDS - int((now - last_requested).total_seconds())
+                return False, f"Please wait {max(1, remaining)} seconds before requesting another OTP."
+        except ValueError:
+            pass
+
+    window_started_at = record.get("window_started_at")
+    request_count = int(record.get("request_count", 0))
+    if window_started_at:
+        try:
+            window_started = datetime.strptime(window_started_at, "%Y-%m-%d %H:%M:%S")
+            if now - window_started > timedelta(minutes=OTP_REQUEST_WINDOW_MINUTES):
+                request_count = 0
+                window_started = now
+            if request_count >= OTP_MAX_REQUESTS:
+                return False, "OTP request limit reached. Please try again later."
+        except ValueError:
+            window_started = now
+            request_count = 0
+    else:
+        window_started = now
+
+    record["last_requested_at"] = now.strftime("%Y-%m-%d %H:%M:%S")
+    record["window_started_at"] = window_started.strftime("%Y-%m-%d %H:%M:%S")
+    record["request_count"] = request_count + 1
+    state[key] = record
+    set_otp_rate_state(state)
+    return True, None
+
+
+def reset_otp_attempts(recipient, purpose):
+    attempts = session.get("otp_verify_attempts", {})
+    if not isinstance(attempts, dict):
+        attempts = {}
+    attempts.pop(otp_state_key(recipient, purpose), None)
+    session["otp_verify_attempts"] = attempts
+    session.modified = True
+
+
+def increment_otp_attempt(recipient, purpose):
+    attempts = session.get("otp_verify_attempts", {})
+    if not isinstance(attempts, dict):
+        attempts = {}
+    key = otp_state_key(recipient, purpose)
+    record = attempts.get(key, {"count": 0})
+    record["count"] = int(record.get("count", 0)) + 1
+    attempts[key] = record
+    session["otp_verify_attempts"] = attempts
+    session.modified = True
+    return record["count"]
+
+
+def clear_otp_rate_state(recipient, purpose):
+    state = get_otp_rate_state()
+    state.pop(otp_state_key(recipient, purpose), None)
+    set_otp_rate_state(state)
+
+
+def staff_role_is_valid(role):
+    return role in {"manager", "delivery_partner"}
+
+
+def set_staff_session(staff):
+    session["staff_id"] = staff["id"]
+    session["staff_name"] = staff["name"]
+    session["staff_email"] = staff["email"]
+    session["staff_role"] = staff["role"]
+    session["account_role"] = staff["role"]
+
+
+def login_staff_by_mobile(mobile_number, password, role):
+    if not staff_role_is_valid(role):
+        return None, (jsonify({"ok": False, "error": "Select a valid staff role."}), 400)
+
+    staff = query_db(
+        "SELECT id, name, email, role, password, mobile_number, mobile_verified FROM staff_users WHERE mobile_number = ? AND role = ? AND is_active = 1",
+        (mobile_number, role),
+        one=True,
+    )
+    if not staff:
+        return None, (jsonify({"ok": False, "error": "Staff mobile number is not registered."}), 404)
+    if not check_password_hash(staff["password"], password):
+        return None, (jsonify({"ok": False, "error": "Invalid mobile number or password."}), 401)
+    return staff, None
 
 
 def validate_payment_and_details(form, payment_method):
@@ -903,11 +1058,16 @@ def request_otp():
     payload = request.get_json(silent=True) or request.form
     purpose = (payload.get("purpose") or "login").strip().lower()
     mobile_number = normalize_mobile(payload.get("mobile_number"))
+    role = (payload.get("role") or "").strip().lower()
 
-    if purpose not in ("register", "login"):
+    if purpose not in ("register", "login", "staff_login", "staff_onboard"):
         return jsonify({"ok": False, "error": "Invalid OTP purpose."}), 400
     if not mobile_number:
         return jsonify({"ok": False, "error": "Enter a valid 10-digit mobile number."}), 400
+
+    allowed, cooldown_error = can_request_otp(mobile_number, purpose)
+    if not allowed:
+        return jsonify({"ok": False, "error": cooldown_error}), 429
 
     if purpose == "register":
         existing_user = query_db(
@@ -917,7 +1077,7 @@ def request_otp():
         )
         if existing_user:
             return jsonify({"ok": False, "error": "Mobile number already registered."}), 409
-    else:
+    elif purpose == "login":
         existing_user = query_db(
             "SELECT id FROM users WHERE mobile_number = ?",
             (mobile_number,),
@@ -925,10 +1085,37 @@ def request_otp():
         )
         if not existing_user:
             return jsonify({"ok": False, "error": "Mobile number is not registered."}), 404
+    elif purpose == "staff_login":
+        if not staff_role_is_valid(role):
+            return jsonify({"ok": False, "error": "Select a valid staff role."}), 400
+        existing_staff = query_db(
+            "SELECT id FROM staff_users WHERE mobile_number = ? AND role = ? AND is_active = 1",
+            (mobile_number, role),
+            one=True,
+        )
+        if not existing_staff:
+            return jsonify({"ok": False, "error": "Staff mobile number is not registered."}), 404
+    elif purpose == "staff_onboard":
+        if not staff_role_is_valid(role):
+            return jsonify({"ok": False, "error": "Select a valid staff role."}), 400
+        existing_staff = query_db(
+            "SELECT id FROM staff_users WHERE mobile_number = ?",
+            (mobile_number,),
+            one=True,
+        )
+        existing_customer = query_db(
+            "SELECT id FROM users WHERE mobile_number = ?",
+            (mobile_number,),
+            one=True,
+        )
+        if existing_staff or existing_customer:
+            return jsonify({"ok": False, "error": "Mobile number is already in use."}), 409
 
     otp_code, expires_at = create_otp_challenge(mobile_number, purpose)
     session["otp_challenge_mobile"] = mobile_number
     session["otp_challenge_purpose"] = purpose
+    if role:
+        session["otp_challenge_role"] = role
 
     response_payload = {
         "ok": True,
@@ -946,17 +1133,24 @@ def verify_otp():
     purpose = (payload.get("purpose") or "login").strip().lower()
     mobile_number = normalize_mobile(payload.get("mobile_number"))
     otp_code = (payload.get("otp_code") or "").strip()
+    role = (payload.get("role") or "").strip().lower()
 
-    if purpose not in ("register", "login"):
+    if purpose not in ("register", "login", "staff_login", "staff_onboard"):
         return jsonify({"ok": False, "error": "Invalid OTP purpose."}), 400
     if not mobile_number:
         return jsonify({"ok": False, "error": "Enter a valid 10-digit mobile number."}), 400
     if not re.match(r"^[0-9]{6}$", otp_code):
         return jsonify({"ok": False, "error": "OTP must be a 6-digit code."}), 400
 
+    if purpose in ("staff_login", "staff_onboard") and not staff_role_is_valid(role):
+        return jsonify({"ok": False, "error": "Select a valid staff role."}), 400
+
     challenge_mobile = session.get("otp_challenge_mobile")
     challenge_purpose = session.get("otp_challenge_purpose")
+    challenge_role = session.get("otp_challenge_role")
     if challenge_mobile != mobile_number or challenge_purpose != purpose:
+        return jsonify({"ok": False, "error": "OTP challenge mismatch. Please request a new OTP."}), 409
+    if challenge_role and role and challenge_role != role:
         return jsonify({"ok": False, "error": "OTP challenge mismatch. Please request a new OTP."}), 409
 
     verified, message = verify_otp_challenge(mobile_number, purpose, otp_code)
@@ -965,6 +1159,8 @@ def verify_otp():
 
     session["otp_verified_mobile"] = mobile_number
     session["otp_verified_purpose"] = purpose
+    if role:
+        session["otp_verified_role"] = role
     session["otp_verified_at"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     return jsonify({"ok": True, "message": message})
 
@@ -1056,6 +1252,106 @@ def mobile_login_with_otp():
     return jsonify({"ok": True, "message": "OTP login successful.", "redirect": url_for("customer_dashboard")})
 
 
+@app.route("/api/auth/staff/mobile/login", methods=["POST"])
+def staff_mobile_login():
+    payload = request.get_json(silent=True) or request.form
+    mobile_number = normalize_mobile(payload.get("mobile_number"))
+    password = (payload.get("password") or "").strip()
+    role = (payload.get("role") or "").strip().lower()
+
+    if not mobile_number or not password:
+        return jsonify({"ok": False, "error": "Mobile number and password are required."}), 400
+
+    staff, error_response = login_staff_by_mobile(mobile_number, password, role)
+    if error_response:
+        return error_response
+
+    set_staff_session(staff)
+    return jsonify({
+        "ok": True,
+        "message": "Login successful.",
+        "redirect": url_for("admin_dashboard") if staff["role"] == "manager" else url_for("delivery_dashboard"),
+    })
+
+
+@app.route("/api/auth/staff/mobile/login-otp", methods=["POST"])
+def staff_mobile_login_with_otp():
+    payload = request.get_json(silent=True) or request.form
+    requested_mobile = normalize_mobile(payload.get("mobile_number"))
+    role = (payload.get("role") or "").strip().lower()
+
+    verified_mobile, otp_error = get_verified_mobile_for_purpose("staff_login")
+    if otp_error:
+        return jsonify({"ok": False, "error": otp_error}), 409
+
+    verified_role = (session.get("otp_verified_role") or "").strip().lower()
+    if role and role != verified_role:
+        return jsonify({"ok": False, "error": "OTP challenge mismatch. Please request a new code."}), 409
+
+    if requested_mobile and requested_mobile != verified_mobile:
+        return jsonify({"ok": False, "error": "Verified OTP mobile does not match request mobile."}), 409
+
+    staff = query_db(
+        "SELECT id, name, email, role, mobile_number FROM staff_users WHERE mobile_number = ? AND role = ? AND is_active = 1",
+        (verified_mobile, verified_role or role),
+        one=True,
+    )
+    if not staff:
+        return jsonify({"ok": False, "error": "Staff account not found."}), 404
+
+    set_staff_session(staff)
+    clear_otp_session()
+    return jsonify({
+        "ok": True,
+        "message": "OTP login successful.",
+        "redirect": url_for("admin_dashboard") if staff["role"] == "manager" else url_for("delivery_dashboard"),
+    })
+
+
+@app.route("/api/admin/staff/onboard", methods=["POST"])
+@admin_required
+def admin_onboard_staff():
+    payload = request.get_json(silent=True) or request.form
+    name = (payload.get("name") or "").strip()
+    mobile_number = normalize_mobile(payload.get("mobile_number"))
+    password = (payload.get("password") or "").strip()
+    role = (payload.get("role") or "").strip().lower()
+
+    verified_mobile, otp_error = get_verified_mobile_for_purpose("staff_onboard")
+    if otp_error:
+        return jsonify({"ok": False, "error": otp_error}), 409
+
+    verified_role = (session.get("otp_verified_role") or "").strip().lower()
+    if not staff_role_is_valid(role) or (verified_role and verified_role != role):
+        return jsonify({"ok": False, "error": "Select a valid staff role."}), 400
+    if mobile_number and mobile_number != verified_mobile:
+        return jsonify({"ok": False, "error": "Verified OTP mobile does not match request mobile."}), 409
+    if not name or len(name) < 2:
+        return jsonify({"ok": False, "error": "Staff name is required."}), 400
+    if len(password) < 6:
+        return jsonify({"ok": False, "error": "Password must be at least 6 characters."}), 400
+
+    existing_staff = query_db("SELECT id FROM staff_users WHERE mobile_number = ?", (verified_mobile,), one=True)
+    existing_customer = query_db("SELECT id FROM users WHERE mobile_number = ?", (verified_mobile,), one=True)
+    if existing_staff or existing_customer:
+        return jsonify({"ok": False, "error": "Mobile number is already in use."}), 409
+
+    db = get_db()
+    db.execute(
+        "INSERT INTO staff_users (name, email, mobile_number, mobile_verified, password, role, is_active) VALUES (?, ?, ?, 1, ?, ?, 1)",
+        (
+            name,
+            f"staff_{verified_mobile}@foodflux.local",
+            verified_mobile,
+            generate_password_hash(password),
+            role,
+        ),
+    )
+    db.commit()
+    clear_otp_session()
+    return jsonify({"ok": True, "message": "Staff account created successfully."})
+
+
 @app.route("/login", methods=["GET", "POST"])
 def login():
     if session.get("account_role") == "customer" and session.get("user_id"):
@@ -1141,7 +1437,26 @@ def customer_dashboard():
 
 @app.route("/logout")
 def logout():
-    session_keys = ["user_id", "user_name", "user_email", "cart", "account_role", "staff_id", "staff_name", "staff_email", "staff_role"]
+    session_keys = [
+        "user_id",
+        "user_name",
+        "user_email",
+        "cart",
+        "account_role",
+        "staff_id",
+        "staff_name",
+        "staff_email",
+        "staff_role",
+        "otp_challenge_mobile",
+        "otp_challenge_purpose",
+        "otp_challenge_role",
+        "otp_verified_mobile",
+        "otp_verified_purpose",
+        "otp_verified_role",
+        "otp_verified_at",
+        "otp_rate_state",
+        "otp_verify_attempts",
+    ]
     for key in session_keys:
         session.pop(key, None)
     flash("You have been logged out.", "info")
@@ -1262,6 +1577,8 @@ def add_to_cart(food_id):
     cart[str(food_id)] = cart.get(str(food_id), 0) + 1
     session["cart"] = cart
     session.modified = True
+    if wants_json_response():
+        return jsonify({"ok": True, "message": "Food item added to cart.", **get_cart_state_payload()})
     flash("Food item added to cart.", "success")
     return redirect(request.referrer or url_for("menu"))
 
@@ -1272,8 +1589,37 @@ def remove_from_cart(food_id):
     cart.pop(str(food_id), None)
     session["cart"] = cart
     session.modified = True
+    if wants_json_response():
+        return jsonify({"ok": True, "message": "Item removed from cart.", **get_cart_state_payload()})
     flash("Item removed from cart.", "info")
     return redirect(url_for("cart"))
+
+
+@app.route("/api/cart/state")
+def cart_state():
+    return jsonify({"ok": True, **get_cart_state_payload()})
+
+
+@app.route("/api/cart/update", methods=["POST"])
+def update_cart_item_api():
+    payload = request.get_json(silent=True) or request.form
+    food_id = str(payload.get("food_id") or "").strip()
+    try:
+        quantity = int(payload.get("quantity"))
+    except (TypeError, ValueError):
+        quantity = 1
+
+    if not food_id.isdigit():
+        return jsonify({"ok": False, "error": "Invalid food item."}), 400
+
+    cart = session.get("cart", {})
+    if quantity < 1:
+        cart.pop(food_id, None)
+    else:
+        cart[food_id] = min(quantity, 99)
+    session["cart"] = cart
+    session.modified = True
+    return jsonify({"ok": True, **get_cart_state_payload()})
 
 
 @app.route("/cart", methods=["GET", "POST"])
@@ -1297,17 +1643,7 @@ def cart():
         flash("Cart updated successfully.", "success")
         return redirect(url_for("cart"))
 
-    items = []
-    total = 0.0
-    if cart:
-        food_ids = tuple(int(fid) for fid in cart.keys())
-        placeholder = ",".join("?" for _ in food_ids)
-        foods = query_db(f"SELECT * FROM foods WHERE id IN ({placeholder})", food_ids)
-        for food in foods:
-            qty = cart.get(str(food["id"]), 0)
-            subtotal = food["price"] * qty
-            total += subtotal
-            items.append({"food": food, "qty": qty, "subtotal": subtotal})
+    items, total = get_cart_items_from_session()
     return render_template("cart.html", items=items, total=total)
 
 
@@ -1425,6 +1761,51 @@ def generate_upi_qr(amount, upi_id="9392831334@paytm", payee_name="FoodFlux"):
     except Exception as e:
         print(f"QR Code generation error: {e}")
         return None
+
+
+def get_cart_items_from_session():
+    cart = session.get("cart", {})
+    items = []
+    total = 0.0
+
+    if not cart:
+        return items, total
+
+    food_ids = tuple(int(fid) for fid in cart.keys())
+    placeholder = ",".join("?" for _ in food_ids)
+    foods = query_db(f"SELECT * FROM foods WHERE id IN ({placeholder})", food_ids)
+    for food in foods:
+        qty = int(cart.get(str(food["id"]), 0))
+        if qty < 1:
+            continue
+        subtotal = float(food["price"] or 0) * qty
+        total += subtotal
+        items.append({"food": food, "qty": qty, "subtotal": subtotal})
+
+    return items, total
+
+
+def get_cart_state_payload():
+    items, total = get_cart_items_from_session()
+    return {
+        "count": sum(item["qty"] for item in items),
+        "total": round(total, 2),
+        "items": [
+            {
+                "food_id": item["food"]["id"],
+                "name": item["food"]["name"],
+                "price": float(item["food"]["price"] or 0),
+                "qty": item["qty"],
+                "subtotal": round(item["subtotal"], 2),
+                "image": item["food"]["image"],
+            }
+            for item in items
+        ],
+    }
+
+
+def wants_json_response():
+    return request.headers.get("X-Requested-With") == "XMLHttpRequest" or request.accept_mimetypes.best == "application/json"
 
 
 @app.route("/order_success/<int:order_id>")
