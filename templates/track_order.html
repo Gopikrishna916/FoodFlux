@@ -154,6 +154,30 @@
             </div>
             {% endif %}
 
+            <div class="card shadow-sm mb-4 fade-in" style="animation-delay: 0.67s;">
+                <div class="card-body">
+                    <h5 class="card-title mb-3">Order Timeline</h5>
+                    {% if timeline_entries %}
+                    <ul class="list-group list-group-flush">
+                        {% for step in timeline_entries %}
+                        <li class="list-group-item d-flex justify-content-between align-items-start">
+                            <div>
+                                <div class="fw-semibold">{{ step.status }}</div>
+                                <small class="text-muted">{{ step.actor_type|replace('_', ' ')|title }}{% if step.actor_name %}: {{ step.actor_name }}{% endif %}</small>
+                                {% if step.note %}
+                                <div class="small text-muted">{{ step.note }}</div>
+                                {% endif %}
+                            </div>
+                            <small class="text-muted">{{ step.created_at }}</small>
+                        </li>
+                        {% endfor %}
+                    </ul>
+                    {% else %}
+                    <div class="text-muted">Timeline updates will appear here as your order progresses.</div>
+                    {% endif %}
+                </div>
+            </div>
+
             <!-- Action Buttons -->
             <div class="card shadow-sm mb-4 fade-in" style="animation-delay: 0.7s;">
                 <div class="card-body">

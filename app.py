@@ -7,6 +7,8 @@ import mimetypes
 import json
 import threading
 import random
+from urllib import parse, request as urlrequest
+from urllib.error import URLError, HTTPError
 from io import BytesIO
 from datetime import datetime, timedelta
 from flask import Flask, render_template, request, redirect, url_for, flash, session, g, jsonify
@@ -38,6 +40,9 @@ UPLOAD_DIR = os.path.join(BASE_DIR, "static", "images")
 
 DB_INIT_LOCK = threading.Lock()
 DB_INIT_DONE = False
+CACHE_LOCK = threading.Lock()
+APP_CACHE = {}
+CACHE_TTL_SECONDS = int(os.environ.get("CACHE_TTL_SECONDS", "15"))
 
 ADMIN_EMAIL = os.environ.get("ADMIN_EMAIL", "admin@ckfood.com")
 ADMIN_PASSWORD = os.environ.get("ADMIN_PASSWORD", "admin123")
@@ -49,6 +54,7 @@ OTP_REQUEST_COOLDOWN_SECONDS = 30
 OTP_MAX_REQUESTS = 5
 OTP_REQUEST_WINDOW_MINUTES = 15
 OTP_MAX_VERIFY_ATTEMPTS = 5
+OTP_SMS_PROVIDER = os.environ.get("OTP_SMS_PROVIDER", "mock").strip().lower()
 
 DELIVERY_STAFF = [
     ("Rahul Sharma", "rahul@ckfood.com", "delivery123", "9000000002"),
@@ -239,8 +245,37 @@ def init_db():
         )
         '''
     )
+    db.execute(
+        '''
+        CREATE TABLE IF NOT EXISTS notifications(
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            target_type TEXT NOT NULL,
+            target_id TEXT NOT NULL,
+            title TEXT NOT NULL,
+            message TEXT NOT NULL,
+            category TEXT NOT NULL DEFAULT 'info',
+            is_read INTEGER NOT NULL DEFAULT 0,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+        '''
+    )
+    db.execute(
+        '''
+        CREATE TABLE IF NOT EXISTS order_timeline(
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            order_id INTEGER NOT NULL,
+            status TEXT NOT NULL,
+            actor_type TEXT NOT NULL DEFAULT 'system',
+            actor_name TEXT,
+            note TEXT,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY(order_id) REFERENCES orders(id)
+        )
+        '''
+    )
     ensure_users_schema(db)
     ensure_staff_schema(db)
+    ensure_foods_schema(db)
     ensure_orders_schema(db)
     ensure_performance_indexes(db)
     db.commit()
@@ -275,6 +310,18 @@ def ensure_staff_schema(db):
         db.execute("ALTER TABLE staff_users ADD COLUMN mobile_verified INTEGER NOT NULL DEFAULT 0")
 
 
+def ensure_foods_schema(db):
+    food_columns = {col["name"] for col in db.execute("PRAGMA table_info(foods)").fetchall()}
+    if not food_columns:
+        return
+    if "stock_qty" not in food_columns:
+        db.execute("ALTER TABLE foods ADD COLUMN stock_qty INTEGER NOT NULL DEFAULT 25")
+    if "is_available" not in food_columns:
+        db.execute("ALTER TABLE foods ADD COLUMN is_available INTEGER NOT NULL DEFAULT 1")
+    if "is_deleted" not in food_columns:
+        db.execute("ALTER TABLE foods ADD COLUMN is_deleted INTEGER NOT NULL DEFAULT 0")
+
+
 def ensure_performance_indexes(db):
     index_statements = [
         "CREATE INDEX IF NOT EXISTS idx_users_lower_email ON users(LOWER(email))",
@@ -287,11 +334,14 @@ def ensure_performance_indexes(db):
         "CREATE INDEX IF NOT EXISTS idx_orders_status ON orders(status)",
         "CREATE INDEX IF NOT EXISTS idx_orders_delivery_status ON orders(delivery_person, status)",
         "CREATE INDEX IF NOT EXISTS idx_orders_auto_delivered_at ON orders(auto_delivered_at)",
+        "CREATE INDEX IF NOT EXISTS idx_foods_visible ON foods(is_deleted, is_available, stock_qty)",
         "CREATE INDEX IF NOT EXISTS idx_order_items_order_id ON order_items(order_id)",
         "CREATE INDEX IF NOT EXISTS idx_order_items_food_id ON order_items(food_id)",
         "CREATE INDEX IF NOT EXISTS idx_ratings_user_order ON ratings(user_id, order_id)",
         "CREATE INDEX IF NOT EXISTS idx_service_ratings_user_order_target ON service_ratings(user_id, order_id, target_type)",
         "CREATE INDEX IF NOT EXISTS idx_rider_locations_updated_at ON rider_locations(updated_at)",
+        "CREATE INDEX IF NOT EXISTS idx_notifications_target_read_created ON notifications(target_type, target_id, is_read, created_at DESC)",
+        "CREATE INDEX IF NOT EXISTS idx_order_timeline_order_created ON order_timeline(order_id, created_at DESC)",
     ]
     for statement in index_statements:
         db.execute(statement)
@@ -451,6 +501,8 @@ def emit_order_event(order_id, event_name=None, extra_payload=None):
     if extra_payload:
         payload.update(extra_payload)
 
+    invalidate_cache("live:")
+
     socketio.emit("order_event", payload, room="manager")
     socketio.emit("order_event", payload, room=f"customer_{payload['user_id']}")
 
@@ -485,7 +537,172 @@ def update_due_delivery_statuses():
     db.commit()
 
     for due_order in due_orders:
+        log_order_timeline(due_order["id"], "Delivered", "system", "Auto Delivery", "Auto-marked as delivered by ETA")
+        create_order_notifications(due_order["id"], "Delivered")
         emit_order_event(due_order["id"], "delivered")
+
+
+def cache_get(cache_key):
+    with CACHE_LOCK:
+        cached = APP_CACHE.get(cache_key)
+        if not cached:
+            return None
+        expires_at, value = cached
+        if datetime.now() > expires_at:
+            APP_CACHE.pop(cache_key, None)
+            return None
+        return value
+
+
+def cache_set(cache_key, value, ttl_seconds=CACHE_TTL_SECONDS):
+    with CACHE_LOCK:
+        APP_CACHE[cache_key] = (datetime.now() + timedelta(seconds=ttl_seconds), value)
+
+
+def invalidate_cache(prefix=None):
+    with CACHE_LOCK:
+        if not prefix:
+            APP_CACHE.clear()
+            return
+        keys = [key for key in APP_CACHE.keys() if str(key).startswith(prefix)]
+        for key in keys:
+            APP_CACHE.pop(key, None)
+
+
+def create_notification(target_type, target_id, title, message, category="info"):
+    db = get_db()
+    db.execute(
+        '''
+        INSERT INTO notifications (target_type, target_id, title, message, category, is_read)
+        VALUES (?, ?, ?, ?, ?, 0)
+        ''',
+        (target_type, str(target_id), title, message, category),
+    )
+    db.commit()
+
+
+def create_order_notifications(order_id, status):
+    payload = get_order_payload(order_id)
+    if not payload:
+        return
+
+    create_notification(
+        "customer",
+        payload["user_id"],
+        f"Order #{order_id} {status}",
+        f"Your order is now '{status}'.",
+        "order",
+    )
+    create_notification("manager", "global", f"Order #{order_id} {status}", "Order status changed.", "order")
+    if payload.get("delivery_person"):
+        create_notification(
+            "delivery_partner",
+            payload["delivery_person"],
+            f"Order #{order_id} {status}",
+            "Delivery workflow updated.",
+            "order",
+        )
+
+
+def log_order_timeline(order_id, status, actor_type="system", actor_name=None, note=None):
+    db = get_db()
+    db.execute(
+        '''
+        INSERT INTO order_timeline (order_id, status, actor_type, actor_name, note)
+        VALUES (?, ?, ?, ?, ?)
+        ''',
+        (order_id, status, actor_type, actor_name, note),
+    )
+    db.commit()
+
+
+def send_sms_via_twilio(mobile_number, otp_code):
+    account_sid = os.environ.get("TWILIO_ACCOUNT_SID", "")
+    auth_token = os.environ.get("TWILIO_AUTH_TOKEN", "")
+    from_number = os.environ.get("TWILIO_FROM_NUMBER", "")
+    if not account_sid or not auth_token or not from_number:
+        return False, "Twilio credentials are not configured."
+
+    endpoint = f"https://api.twilio.com/2010-04-01/Accounts/{account_sid}/Messages.json"
+    body = parse.urlencode(
+        {
+            "From": from_number,
+            "To": f"+91{mobile_number}",
+            "Body": f"Your FoodFlux OTP is {otp_code}. It expires in 5 minutes.",
+        }
+    ).encode("utf-8")
+    req = urlrequest.Request(endpoint, data=body, method="POST")
+    auth = base64.b64encode(f"{account_sid}:{auth_token}".encode("utf-8")).decode("utf-8")
+    req.add_header("Authorization", f"Basic {auth}")
+    req.add_header("Content-Type", "application/x-www-form-urlencoded")
+    try:
+        with urlrequest.urlopen(req, timeout=10):
+            return True, None
+    except (HTTPError, URLError) as exc:
+        return False, str(exc)
+
+
+def send_sms_via_fast2sms(mobile_number, otp_code):
+    api_key = os.environ.get("FAST2SMS_API_KEY", "")
+    if not api_key:
+        return False, "Fast2SMS API key is not configured."
+    payload = {
+        "route": "q",
+        "message": f"FoodFlux OTP: {otp_code}. Valid for 5 minutes.",
+        "language": "english",
+        "numbers": mobile_number,
+    }
+    body = json.dumps(payload).encode("utf-8")
+    req = urlrequest.Request("https://www.fast2sms.com/dev/bulkV2", data=body, method="POST")
+    req.add_header("authorization", api_key)
+    req.add_header("Content-Type", "application/json")
+    try:
+        with urlrequest.urlopen(req, timeout=10):
+            return True, None
+    except (HTTPError, URLError) as exc:
+        return False, str(exc)
+
+
+def send_sms_via_msg91(mobile_number, otp_code):
+    auth_key = os.environ.get("MSG91_AUTH_KEY", "")
+    sender = os.environ.get("MSG91_SENDER", "FOODFX")
+    template_id = os.environ.get("MSG91_TEMPLATE_ID", "")
+    if not auth_key or not template_id:
+        return False, "MSG91 credentials are not configured."
+    endpoint = "https://control.msg91.com/api/v5/flow/"
+    payload = {
+        "template_id": template_id,
+        "short_url": "0",
+        "recipients": [
+            {
+                "mobiles": f"91{mobile_number}",
+                "OTP": otp_code,
+                "sender": sender,
+            }
+        ],
+    }
+    body = json.dumps(payload).encode("utf-8")
+    req = urlrequest.Request(endpoint, data=body, method="POST")
+    req.add_header("authkey", auth_key)
+    req.add_header("Content-Type", "application/json")
+    try:
+        with urlrequest.urlopen(req, timeout=10):
+            return True, None
+    except (HTTPError, URLError) as exc:
+        return False, str(exc)
+
+
+def send_otp_sms(mobile_number, otp_code):
+    provider = OTP_SMS_PROVIDER
+    if provider == "twilio":
+        return send_sms_via_twilio(mobile_number, otp_code)
+    if provider == "fast2sms":
+        return send_sms_via_fast2sms(mobile_number, otp_code)
+    if provider == "msg91":
+        return send_sms_via_msg91(mobile_number, otp_code)
+    # Mock provider keeps flow non-breaking in environments without SMS credentials.
+    print(f"[OTP-MOCK] OTP for {mobile_number}: {otp_code}")
+    return True, None
 
 
 @socketio.on("connect")
@@ -988,12 +1205,42 @@ def bootstrap_database_if_needed():
 def inject_cart_count():
     cart = session.get("cart", {})
     count = sum(cart.values()) if cart else 0
-    return {"cart_count": count}
+    unread_count = get_unread_notification_count()
+    return {"cart_count": count, "unread_notification_count": unread_count}
+
+
+def get_unread_notification_count():
+    role = session.get("account_role")
+    if role == "customer" and session.get("user_id"):
+        row = query_db(
+            "SELECT COUNT(*) AS c FROM notifications WHERE target_type = 'customer' AND target_id = ? AND is_read = 0",
+            (str(session.get("user_id")),),
+            one=True,
+        )
+        return row["c"] if row else 0
+    if role == "manager":
+        row = query_db(
+            "SELECT COUNT(*) AS c FROM notifications WHERE target_type = 'manager' AND target_id = 'global' AND is_read = 0",
+            one=True,
+        )
+        return row["c"] if row else 0
+    if role == "delivery_partner" and session.get("staff_name"):
+        row = query_db(
+            "SELECT COUNT(*) AS c FROM notifications WHERE target_type = 'delivery_partner' AND target_id = ? AND is_read = 0",
+            (session.get("staff_name"),),
+            one=True,
+        )
+        return row["c"] if row else 0
+    return 0
 
 
 @app.route("/")
 def home():
     search = request.args.get("q", "")
+    cache_key = f"home:{search.strip().lower()}"
+    cached = cache_get(cache_key)
+    if cached is not None:
+        return render_template("home.html", foods=cached, search=search)
     if search:
         foods = query_db(
             '''
@@ -1003,7 +1250,10 @@ def home():
                 COUNT(r.id) AS rating_count
             FROM foods f
             LEFT JOIN ratings r ON r.food_id = f.id
-            WHERE f.name LIKE ? OR f.description LIKE ?
+            WHERE (f.name LIKE ? OR f.description LIKE ?)
+              AND COALESCE(f.is_deleted, 0) = 0
+              AND COALESCE(f.is_available, 1) = 1
+              AND COALESCE(f.stock_qty, 0) > 0
             GROUP BY f.id
             ORDER BY f.id DESC
             LIMIT 8
@@ -1019,11 +1269,15 @@ def home():
                 COUNT(r.id) AS rating_count
             FROM foods f
             LEFT JOIN ratings r ON r.food_id = f.id
+                        WHERE COALESCE(f.is_deleted, 0) = 0
+                            AND COALESCE(f.is_available, 1) = 1
+                            AND COALESCE(f.stock_qty, 0) > 0
             GROUP BY f.id
             ORDER BY f.id DESC
             LIMIT 8
             '''
         )
+        cache_set(cache_key, foods)
     return render_template("home.html", foods=foods, search=search)
 
 
@@ -1112,6 +1366,10 @@ def request_otp():
             return jsonify({"ok": False, "error": "Mobile number is already in use."}), 409
 
     otp_code, expires_at = create_otp_challenge(mobile_number, purpose)
+    sms_sent, sms_error = send_otp_sms(mobile_number, otp_code)
+    if not sms_sent and os.environ.get("RENDER"):
+        return jsonify({"ok": False, "error": f"Failed to send OTP SMS. {sms_error or ''}".strip()}), 502
+
     session["otp_challenge_mobile"] = mobile_number
     session["otp_challenge_purpose"] = purpose
     if role:
@@ -1121,6 +1379,7 @@ def request_otp():
         "ok": True,
         "message": "OTP generated successfully.",
         "expires_at": expires_at,
+        "resend_after_seconds": OTP_REQUEST_COOLDOWN_SECONDS,
     }
     if not os.environ.get("RENDER"):
         response_payload["dev_otp"] = otp_code
@@ -1538,6 +1797,10 @@ def delivery_login():
 def menu():
     category = request.args.get("category")
     search = request.args.get("q", "")
+    cache_key = f"menu:{(category or '').strip().lower()}:{search.strip().lower()}"
+    cached = cache_get(cache_key)
+    if cached is not None:
+        return render_template("menu.html", foods=cached, category=category, search=search)
     query = """
     SELECT
         f.*,
@@ -1547,7 +1810,7 @@ def menu():
     LEFT JOIN ratings r ON r.food_id = f.id
     """
     args = []
-    filters = []
+    filters = ["COALESCE(f.is_deleted, 0) = 0", "COALESCE(f.is_available, 1) = 1", "COALESCE(f.stock_qty, 0) > 0"]
     if category:
         filters.append("f.category = ?")
         args.append(category)
@@ -1558,6 +1821,7 @@ def menu():
         query += " WHERE " + " AND ".join(filters)
     query += " GROUP BY f.id ORDER BY f.id DESC"
     foods = query_db(query, tuple(args))
+    cache_set(cache_key, foods)
     return render_template("menu.html", foods=foods, category=category, search=search)
 
 
@@ -1662,6 +1926,12 @@ def checkout():
     foods = query_db(f"SELECT * FROM foods WHERE id IN ({placeholder})", food_ids)
     for food in foods:
         qty = cart.get(str(food["id"]), 0)
+        available_qty = int(food["stock_qty"] if "stock_qty" in food.keys() and food["stock_qty"] is not None else 25)
+        is_available = int(food["is_available"] if "is_available" in food.keys() and food["is_available"] is not None else 1)
+        is_deleted = int(food["is_deleted"] if "is_deleted" in food.keys() and food["is_deleted"] is not None else 0)
+        if is_deleted or not is_available or available_qty < qty:
+            flash(f"'{food['name']}' is out of stock or unavailable. Please update your cart.", "warning")
+            return redirect(url_for("cart"))
         subtotal = food["price"] * qty
         total += subtotal
         items.append({"food": food, "qty": qty, "subtotal": subtotal})
@@ -1721,11 +1991,23 @@ def checkout():
                 "INSERT INTO order_items (order_id, food_id, qty) VALUES (?, ?, ?)",
                 (order_id, item["food"]["id"], item["qty"])
             )
+            db.execute(
+                "UPDATE foods SET stock_qty = CASE WHEN stock_qty - ? < 0 THEN 0 ELSE stock_qty - ? END WHERE id = ?",
+                (item["qty"], item["qty"], item["food"]["id"]),
+            )
+            db.execute(
+                "UPDATE foods SET is_available = 0 WHERE id = ? AND stock_qty <= 0",
+                (item["food"]["id"],),
+            )
         db.commit()
 
+        log_order_timeline(order_id, "Order Placed", "customer", session.get("user_name"), "Order created from checkout")
+        create_order_notifications(order_id, "Order Placed")
         emit_order_event(order_id, "order_created")
         if assigned_delivery_person and assigned_delivery_person != "Not Assigned":
             emit_order_event(order_id, "rider_assigned")
+        invalidate_cache("home:")
+        invalidate_cache("menu:")
 
         session.pop("cart", None)
         flash("Order placed successfully!", "success")
@@ -1855,12 +2137,22 @@ def track_order(order_id):
         (session["user_id"], order_id),
     )
     service_rating_map = {row["target_type"]: row for row in service_ratings}
+    timeline_entries = query_db(
+        '''
+        SELECT status, actor_type, actor_name, note, created_at
+        FROM order_timeline
+        WHERE order_id = ?
+        ORDER BY created_at ASC
+        ''',
+        (order_id,),
+    )
 
     return render_template(
         "track_order.html",
         order=order,
         order_items=order_items,
         service_rating_map=service_rating_map,
+        timeline_entries=timeline_entries,
     )
 
 
@@ -1992,6 +2284,117 @@ def admin_logout():
     return redirect(url_for("logout"))
 
 
+@app.route("/admin/users")
+@admin_required
+def admin_users():
+    customers = query_db(
+        "SELECT id, name, email, mobile_number, mobile_verified FROM users ORDER BY id DESC"
+    )
+    staff_members = query_db(
+        "SELECT id, name, email, mobile_number, mobile_verified, role, is_active, created_at FROM staff_users ORDER BY id DESC"
+    )
+    return render_template("admin_users.html", customers=customers, staff_members=staff_members)
+
+
+@app.route("/admin/users/staff/<int:staff_id>/toggle", methods=["POST"])
+@admin_required
+def toggle_staff_status(staff_id):
+    db = get_db()
+    row = db.execute("SELECT id, is_active, name FROM staff_users WHERE id = ?", (staff_id,)).fetchone()
+    if not row:
+        flash("Staff account not found.", "warning")
+        return redirect(url_for("admin_users"))
+    next_state = 0 if int(row["is_active"] or 0) == 1 else 1
+    db.execute("UPDATE staff_users SET is_active = ? WHERE id = ?", (next_state, staff_id))
+    db.commit()
+    flash(f"Staff account '{row['name']}' {'activated' if next_state == 1 else 'deactivated'}.", "success")
+    return redirect(url_for("admin_users"))
+
+
+@app.route("/notifications")
+def notifications_center():
+    role = session.get("account_role")
+    if role == "customer" and session.get("user_id"):
+        notifications = query_db(
+            "SELECT * FROM notifications WHERE target_type = 'customer' AND target_id = ? ORDER BY created_at DESC LIMIT 100",
+            (str(session.get("user_id")),),
+        )
+    elif role == "manager":
+        notifications = query_db(
+            "SELECT * FROM notifications WHERE target_type = 'manager' AND target_id = 'global' ORDER BY created_at DESC LIMIT 100"
+        )
+    elif role == "delivery_partner" and session.get("staff_name"):
+        notifications = query_db(
+            "SELECT * FROM notifications WHERE target_type = 'delivery_partner' AND target_id = ? ORDER BY created_at DESC LIMIT 100",
+            (session.get("staff_name"),),
+        )
+    else:
+        flash("Please login to view notifications.", "warning")
+        return redirect(url_for("login"))
+
+    return render_template("notifications.html", notifications=notifications)
+
+
+@app.route("/api/notifications")
+def notifications_api():
+    role = session.get("account_role")
+    if role == "customer" and session.get("user_id"):
+        notifications = query_db(
+            "SELECT * FROM notifications WHERE target_type = 'customer' AND target_id = ? ORDER BY created_at DESC LIMIT 50",
+            (str(session.get("user_id")),),
+        )
+    elif role == "manager":
+        notifications = query_db(
+            "SELECT * FROM notifications WHERE target_type = 'manager' AND target_id = 'global' ORDER BY created_at DESC LIMIT 50"
+        )
+    elif role == "delivery_partner" and session.get("staff_name"):
+        notifications = query_db(
+            "SELECT * FROM notifications WHERE target_type = 'delivery_partner' AND target_id = ? ORDER BY created_at DESC LIMIT 50",
+            (session.get("staff_name"),),
+        )
+    else:
+        return jsonify({"ok": False, "error": "Not authenticated."}), 401
+
+    return jsonify(
+        {
+            "ok": True,
+            "items": [
+                {
+                    "id": row["id"],
+                    "title": row["title"],
+                    "message": row["message"],
+                    "category": row["category"],
+                    "is_read": row["is_read"],
+                    "created_at": row["created_at"],
+                }
+                for row in notifications
+            ],
+        }
+    )
+
+
+@app.route("/api/notifications/mark-read", methods=["POST"])
+def notifications_mark_read_api():
+    role = session.get("account_role")
+    db = get_db()
+    if role == "customer" and session.get("user_id"):
+        db.execute(
+            "UPDATE notifications SET is_read = 1 WHERE target_type = 'customer' AND target_id = ?",
+            (str(session.get("user_id")),),
+        )
+    elif role == "manager":
+        db.execute("UPDATE notifications SET is_read = 1 WHERE target_type = 'manager' AND target_id = 'global'")
+    elif role == "delivery_partner" and session.get("staff_name"):
+        db.execute(
+            "UPDATE notifications SET is_read = 1 WHERE target_type = 'delivery_partner' AND target_id = ?",
+            (session.get("staff_name"),),
+        )
+    else:
+        return jsonify({"ok": False, "error": "Not authenticated."}), 401
+    db.commit()
+    return jsonify({"ok": True})
+
+
 @app.route("/admin")
 @app.route("/manager/dashboard")
 @admin_required
@@ -2105,6 +2508,8 @@ def admin_foods():
         name = request.form.get("name")
         category = request.form.get("category")
         price = request.form.get("price")
+        stock_qty_raw = request.form.get("stock_qty", "25")
+        is_available = 1 if request.form.get("is_available") == "on" else 0
         image_file = request.files.get("image_file")
         description = request.form.get("description")
 
@@ -2114,8 +2519,9 @@ def admin_foods():
 
         try:
             price = float(price)
+            stock_qty = max(0, int(stock_qty_raw))
         except ValueError:
-            flash("Invalid price.", "danger")
+            flash("Invalid price or stock quantity.", "danger")
             return redirect(url_for("admin_foods"))
 
         image, upload_error = save_uploaded_food_image(image_file)
@@ -2125,14 +2531,16 @@ def admin_foods():
 
         db = get_db()
         db.execute(
-            "INSERT INTO foods (name, category, price, image, description) VALUES (?, ?, ?, ?, ?)",
-            (name, category, price, image, description)
+            "INSERT INTO foods (name, category, price, image, description, stock_qty, is_available, is_deleted) VALUES (?, ?, ?, ?, ?, ?, ?, 0)",
+            (name, category, price, image, description, stock_qty, is_available)
         )
         db.commit()
+        invalidate_cache("home:")
+        invalidate_cache("menu:")
         flash("Food item added successfully.", "success")
         return redirect(url_for("admin_foods"))
 
-    foods = query_db("SELECT * FROM foods ORDER BY id DESC")
+    foods = query_db("SELECT * FROM foods ORDER BY is_deleted ASC, id DESC")
     return render_template("admin_food_form.html", foods=foods)
 
 
@@ -2143,6 +2551,8 @@ def edit_food(food_id):
     name = request.form.get("name")
     category = request.form.get("category")
     price = request.form.get("price")
+    stock_qty_raw = request.form.get("stock_qty", "0")
+    is_available = 1 if request.form.get("is_available") == "on" else 0
     description = request.form.get("description")
     image_file = request.files.get("image_file")
 
@@ -2152,8 +2562,9 @@ def edit_food(food_id):
 
     try:
         price = float(price)
+        stock_qty = max(0, int(stock_qty_raw))
     except ValueError:
-        flash("Invalid price.", "danger")
+        flash("Invalid price or stock quantity.", "danger")
         return redirect(url_for("admin_foods"))
 
     db = get_db()
@@ -2171,10 +2582,12 @@ def edit_food(food_id):
         updated_image = saved_image
 
     db.execute(
-        "UPDATE foods SET name = ?, category = ?, price = ?, image = ?, description = ? WHERE id = ?",
-        (name, category, price, updated_image, description, food_id),
+        "UPDATE foods SET name = ?, category = ?, price = ?, image = ?, description = ?, stock_qty = ?, is_available = ?, is_deleted = 0 WHERE id = ?",
+        (name, category, price, updated_image, description, stock_qty, is_available, food_id),
     )
     db.commit()
+    invalidate_cache("home:")
+    invalidate_cache("menu:")
     flash("Food item updated successfully.", "success")
     return redirect(url_for("admin_foods"))
 
@@ -2191,12 +2604,18 @@ def delete_food(food_id):
 
     linked_items = db.execute("SELECT COUNT(*) AS count FROM order_items WHERE food_id = ?", (food_id,)).fetchone()
     if linked_items and linked_items["count"] > 0:
-        flash("This item cannot be deleted because it exists in customer orders.", "warning")
+        db.execute("UPDATE foods SET is_deleted = 1, is_available = 0 WHERE id = ?", (food_id,))
+        db.commit()
+        invalidate_cache("home:")
+        invalidate_cache("menu:")
+        flash("Item has active order history, so it was archived (soft delete).", "warning")
         return redirect(url_for("admin_dashboard"))
 
     db.execute("DELETE FROM ratings WHERE food_id = ?", (food_id,))
     db.execute("DELETE FROM foods WHERE id = ?", (food_id,))
     db.commit()
+    invalidate_cache("home:")
+    invalidate_cache("menu:")
 
     image_path = food["image"] or ""
     if image_path.startswith("images/"):
@@ -2222,6 +2641,8 @@ def update_order_status(order_id, status):
     db = get_db()
     db.execute("UPDATE orders SET status = ? WHERE id = ?", (status, order_id))
     db.commit()
+    log_order_timeline(order_id, status, "manager", session.get("staff_name"), "Updated by manager")
+    create_order_notifications(order_id, status)
     emit_order_event(order_id, status_to_socket_event(status))
     flash(f"Order status updated to {status}.", "success")
     return redirect(url_for("admin_orders"))
@@ -2325,6 +2746,9 @@ def delivery_update_order_status(order_id, status):
         event_name = status_to_socket_event(status)
 
     db.commit()
+    timeline_status = "Rider Assigned" if status == "Accept" else ("Ready for Pickup" if status == "Reject" else status)
+    log_order_timeline(order_id, timeline_status, "delivery_partner", session.get("staff_name"), f"Delivery action: {status}")
+    create_order_notifications(order_id, timeline_status)
     emit_order_event(order_id, event_name)
     flash(f"Delivery status updated to {status}.", "success")
     return redirect(url_for("delivery_dashboard"))
@@ -2369,6 +2793,10 @@ def save_rider_location():
 @app.route("/api/live/customer/dashboard")
 @customer_required
 def live_customer_dashboard():
+    cache_key = f"live:customer:{session.get('user_id')}"
+    cached = cache_get(cache_key)
+    if cached is not None:
+        return jsonify({"token": cached})
     update_due_delivery_statuses()
     recent_orders = query_db(
         '''
@@ -2409,12 +2837,17 @@ def live_customer_dashboard():
             ],
         }
     )
+    cache_set(cache_key, token, ttl_seconds=5)
     return jsonify({"token": token})
 
 
 @app.route("/api/live/manager/dashboard")
 @admin_required
 def live_manager_dashboard():
+    cache_key = "live:manager:dashboard"
+    cached = cache_get(cache_key)
+    if cached is not None:
+        return jsonify({"token": cached})
     update_due_delivery_statuses()
     order_stats = query_db(
         '''
@@ -2468,12 +2901,17 @@ def live_manager_dashboard():
             ],
         }
     )
+    cache_set(cache_key, token, ttl_seconds=5)
     return jsonify({"token": token})
 
 
 @app.route("/api/live/manager/orders")
 @admin_required
 def live_manager_orders():
+    cache_key = "live:manager:orders"
+    cached = cache_get(cache_key)
+    if cached is not None:
+        return jsonify({"token": cached})
     update_due_delivery_statuses()
     orders = query_db(
         '''
@@ -2493,12 +2931,17 @@ def live_manager_orders():
             for row in orders
         ]
     )
+    cache_set(cache_key, token, ttl_seconds=5)
     return jsonify({"token": token})
 
 
 @app.route("/api/live/delivery/dashboard")
 @delivery_required
 def live_delivery_dashboard():
+    cache_key = f"live:delivery:{session.get('staff_name')}"
+    cached = cache_get(cache_key)
+    if cached is not None:
+        return jsonify({"token": cached})
     update_due_delivery_statuses()
     assigned_orders = query_db(
         '''
@@ -2540,12 +2983,17 @@ def live_delivery_dashboard():
             ],
         }
     )
+    cache_set(cache_key, token, ttl_seconds=5)
     return jsonify({"token": token})
 
 
 @app.route("/api/live/order/<int:order_id>")
 @login_required
 def live_order(order_id):
+    cache_key = f"live:order:{session.get('user_id')}:{order_id}"
+    cached = cache_get(cache_key)
+    if cached is not None:
+        return jsonify(cached)
     update_due_delivery_statuses()
     order = query_db(
         '''
@@ -2564,22 +3012,22 @@ def live_order(order_id):
         (order_id,),
         one=True,
     )
-    return jsonify(
-        {
-            "id": order["id"],
-            "status": order["status"],
-            "delivery_person": order["delivery_person"],
-            "estimated_delivery_time": order["estimated_delivery_time"],
-            "auto_delivered_at": order["auto_delivered_at"],
-            "rider_location": {
-                "lat": rider_location["lat"],
-                "lng": rider_location["lng"],
-                "updated_at": rider_location["updated_at"],
-            }
-            if rider_location
-            else None,
+    payload = {
+        "id": order["id"],
+        "status": order["status"],
+        "delivery_person": order["delivery_person"],
+        "estimated_delivery_time": order["estimated_delivery_time"],
+        "auto_delivered_at": order["auto_delivered_at"],
+        "rider_location": {
+            "lat": rider_location["lat"],
+            "lng": rider_location["lng"],
+            "updated_at": rider_location["updated_at"],
         }
-    )
+        if rider_location
+        else None,
+    }
+    cache_set(cache_key, payload, ttl_seconds=4)
+    return jsonify(payload)
 
 
 @app.route("/api/order/check/<int:order_id>")

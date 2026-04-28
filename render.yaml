@@ -9,3 +9,5 @@ services:
     envVars:
       - key: PYTHON_VERSION
         value: 3.10.9
+      - key: OTP_SMS_PROVIDER
+        value: mock
