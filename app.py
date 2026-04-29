@@ -53,6 +53,7 @@ OTP_MAX_REQUESTS = 5
 OTP_REQUEST_WINDOW_MINUTES = 15
 OTP_MAX_VERIFY_ATTEMPTS = 5
 OTP_SMS_PROVIDER = os.environ.get("OTP_SMS_PROVIDER", "mock").strip().lower()
+USE_REAL_SMS = os.environ.get("USE_REAL_SMS", "false").strip().lower() in {"1", "true", "yes", "on"}
 
 DELIVERY_STAFF = [
     ("Rahul Sharma", "rahul@ckfood.com", "delivery123", "9000000002"),
@@ -140,6 +141,12 @@ def delivery_allowed_actions(status):
 
 def customer_details_visible_for_delivery(status):
     return status in {"Ready for Pickup", "Rider Assigned", "Picked Up", "On the Way", "Near Customer", "Delivered"}
+
+
+def safe_next_url(next_url, fallback_endpoint):
+    if next_url and next_url.startswith("/") and not next_url.startswith("//"):
+        return next_url
+    return url_for(fallback_endpoint)
 
 
 def get_db():
@@ -400,11 +407,19 @@ def ensure_performance_indexes(db):
 
 def seed_staff_users(db):
     manager_password_hash = generate_password_hash(MANAGER_PASSWORD)
+    admin_password_hash = generate_password_hash(ADMIN_PASSWORD)
     manager_mobile = normalize_mobile(MANAGER_MOBILE) or MANAGER_MOBILE
     existing_staff_rows = db.execute("SELECT email, mobile_number FROM staff_users").fetchall()
     existing_emails = {row["email"].lower() for row in existing_staff_rows}
     existing_mobiles = {normalize_mobile(row["mobile_number"]) for row in existing_staff_rows if row["mobile_number"]}
     existing_mobiles.discard(None)
+
+    if ADMIN_EMAIL.lower() not in existing_emails:
+        db.execute(
+            "INSERT INTO staff_users (name, email, mobile_number, mobile_verified, password, role) VALUES (?, ?, ?, 1, ?, ?)",
+            ("FoodFlux Admin", ADMIN_EMAIL, None, admin_password_hash, "admin"),
+        )
+        existing_emails.add(ADMIN_EMAIL.lower())
 
     if MANAGER_EMAIL.lower() not in existing_emails:
         db.execute(
@@ -739,6 +754,10 @@ def send_sms_via_msg91(mobile_number, otp_code):
 
 
 def send_otp_sms(mobile_number, otp_code):
+    if not USE_REAL_SMS:
+        print(f"[OTP-MOCK] OTP for {mobile_number}: {otp_code}")
+        return True, None
+
     provider = OTP_SMS_PROVIDER
     if provider == "twilio":
         return send_sms_via_twilio(mobile_number, otp_code)
@@ -746,7 +765,6 @@ def send_otp_sms(mobile_number, otp_code):
         return send_sms_via_fast2sms(mobile_number, otp_code)
     if provider == "msg91":
         return send_sms_via_msg91(mobile_number, otp_code)
-    # Mock provider keeps flow non-breaking in environments without SMS credentials.
     print(f"[OTP-MOCK] OTP for {mobile_number}: {otp_code}")
     return True, None
 
@@ -843,7 +861,7 @@ def login_required(func):
     def wrapper(*args, **kwargs):
         if session.get("account_role") != "customer" or not session.get("user_id"):
             flash("Please log in to continue.", "warning")
-            return redirect(url_for("login"))
+            return redirect(url_for("login", next=request.full_path if request.query_string else request.path))
         return func(*args, **kwargs)
 
     wrapper.__name__ = func.__name__
@@ -865,7 +883,15 @@ def role_required(*allowed_roles):
 
 
 def admin_required(func):
+    return role_required("admin")(func)
+
+
+def manager_required(func):
     return role_required("manager")(func)
+
+
+def staff_order_required(func):
+    return role_required("admin", "manager")(func)
 
 
 def delivery_required(func):
@@ -1098,7 +1124,7 @@ def clear_otp_rate_state(recipient, purpose):
 
 
 def staff_role_is_valid(role):
-    return role in {"manager", "delivery_partner"}
+    return role in {"admin", "manager", "delivery_partner"}
 
 
 def set_staff_session(staff):
@@ -1221,7 +1247,7 @@ def get_unread_notification_count():
             one=True,
         )
         return row["c"] if row else 0
-    if role == "manager":
+    if role in ("admin", "manager"):
         row = query_db(
             "SELECT COUNT(*) AS c FROM notifications WHERE target_type = 'manager' AND target_id = 'global' AND is_read = 0",
             one=True,
@@ -1370,7 +1396,7 @@ def request_otp():
 
     otp_code, expires_at = create_otp_challenge(mobile_number, purpose)
     sms_sent, sms_error = send_otp_sms(mobile_number, otp_code)
-    if not sms_sent and os.environ.get("RENDER"):
+    if not sms_sent and USE_REAL_SMS:
         return jsonify({"ok": False, "error": f"Failed to send OTP SMS. {sms_error or ''}".strip()}), 502
 
     session["otp_challenge_mobile"] = mobile_number
@@ -1384,7 +1410,7 @@ def request_otp():
         "expires_at": expires_at,
         "resend_after_seconds": OTP_REQUEST_COOLDOWN_SECONDS,
     }
-    if not os.environ.get("RENDER"):
+    if not USE_REAL_SMS:
         response_payload["dev_otp"] = otp_code
     return jsonify(response_payload)
 
@@ -1467,6 +1493,7 @@ def mobile_login():
     payload = request.get_json(silent=True) or request.form
     mobile_number = normalize_mobile(payload.get("mobile_number"))
     password = (payload.get("password") or "").strip()
+    next_url = payload.get("next")
 
     if not mobile_number or not password:
         return jsonify({"ok": False, "error": "Mobile number and password are required."}), 400
@@ -1483,13 +1510,14 @@ def mobile_login():
     session["user_name"] = user["name"]
     session["user_email"] = user["email"]
     session["account_role"] = "customer"
-    return jsonify({"ok": True, "message": "Login successful.", "redirect": url_for("customer_dashboard")})
+    return jsonify({"ok": True, "message": "Login successful.", "redirect": safe_next_url(next_url, "customer_dashboard")})
 
 
 @app.route("/api/auth/mobile/login-otp", methods=["POST"])
 def mobile_login_with_otp():
     payload = request.get_json(silent=True) or request.form
     requested_mobile = normalize_mobile(payload.get("mobile_number"))
+    next_url = payload.get("next")
 
     verified_mobile, otp_error = get_verified_mobile_for_purpose("login")
     if otp_error:
@@ -1511,7 +1539,7 @@ def mobile_login_with_otp():
     session["user_email"] = user["email"]
     session["account_role"] = "customer"
     clear_otp_session()
-    return jsonify({"ok": True, "message": "OTP login successful.", "redirect": url_for("customer_dashboard")})
+    return jsonify({"ok": True, "message": "OTP login successful.", "redirect": safe_next_url(next_url, "customer_dashboard")})
 
 
 @app.route("/api/auth/staff/mobile/login", methods=["POST"])
@@ -1532,7 +1560,7 @@ def staff_mobile_login():
     return jsonify({
         "ok": True,
         "message": "Login successful.",
-        "redirect": url_for("admin_dashboard") if staff["role"] == "manager" else url_for("delivery_dashboard"),
+        "redirect": url_for("admin_dashboard") if staff["role"] == "admin" else (url_for("manager_dashboard") if staff["role"] == "manager" else url_for("delivery_dashboard")),
     })
 
 
@@ -1566,7 +1594,7 @@ def staff_mobile_login_with_otp():
     return jsonify({
         "ok": True,
         "message": "OTP login successful.",
-        "redirect": url_for("admin_dashboard") if staff["role"] == "manager" else url_for("delivery_dashboard"),
+        "redirect": url_for("admin_dashboard") if staff["role"] == "admin" else (url_for("manager_dashboard") if staff["role"] == "manager" else url_for("delivery_dashboard")),
     })
 
 
@@ -1619,6 +1647,8 @@ def login():
     if session.get("account_role") == "customer" and session.get("user_id"):
         return redirect(url_for("customer_dashboard"))
     if session.get("account_role") == "manager" and session.get("staff_id"):
+        return redirect(url_for("manager_dashboard"))
+    if session.get("account_role") == "admin" and session.get("staff_id"):
         return redirect(url_for("admin_dashboard"))
     if session.get("account_role") == "delivery_partner" and session.get("staff_id"):
         return redirect(url_for("delivery_dashboard"))
@@ -1626,6 +1656,7 @@ def login():
     if request.method == "POST":
         email = (request.form.get("email") or "").strip().lower()
         password = request.form.get("password") or ""
+        next_url = request.form.get("next") or request.args.get("next")
 
         if not email or not password:
             flash("Email and password are required.", "danger")
@@ -1638,12 +1669,45 @@ def login():
             session["user_email"] = user["email"]
             session["account_role"] = "customer"
             flash(f"Welcome, {user['name']}!", "success")
-            return redirect(url_for("customer_dashboard"))
+            return redirect(safe_next_url(next_url, "customer_dashboard"))
 
         flash("Invalid email or password.", "danger")
         return redirect(url_for("login"))
 
     return render_template("login.html")
+
+
+@app.route("/admin_login", methods=["GET", "POST"])
+def admin_login():
+    if session.get("account_role") == "admin" and session.get("staff_id"):
+        return redirect(url_for("admin_dashboard"))
+
+    if request.method == "POST":
+        email = (request.form.get("email") or "").strip().lower()
+        password = request.form.get("password") or ""
+
+        if not email or not password:
+            flash("Email and password are required.", "danger")
+            return redirect(url_for("admin_login"))
+
+        staff = query_db(
+            "SELECT id, name, email, role, password FROM staff_users WHERE LOWER(email) = ? AND role = 'admin' AND is_active = 1",
+            (email,),
+            one=True,
+        )
+        if staff and check_password_hash(staff["password"], password):
+            session["staff_id"] = staff["id"]
+            session["staff_name"] = staff["name"]
+            session["staff_email"] = staff["email"]
+            session["staff_role"] = staff["role"]
+            session["account_role"] = "admin"
+            flash(f"Welcome, {staff['name']}!", "success")
+            return redirect(url_for("admin_dashboard"))
+
+        flash("Invalid admin credentials.", "danger")
+        return redirect(url_for("admin_login"))
+
+    return render_template("admin_login.html")
 
 
 @app.route("/customer/dashboard")
@@ -1728,7 +1792,7 @@ def logout():
 @app.route("/manager/login", methods=["GET", "POST"])
 def manager_login():
     if session.get("account_role") == "manager" and session.get("staff_id"):
-        return redirect(url_for("admin_dashboard"))
+        return redirect(url_for("manager_dashboard"))
 
     if request.method == "POST":
         email = (request.form.get("email") or "").strip().lower()
@@ -1750,7 +1814,7 @@ def manager_login():
             session["staff_role"] = staff["role"]
             session["account_role"] = "manager"
             flash(f"Welcome, {staff['name']}!", "success")
-            return redirect(url_for("admin_dashboard"))
+            return redirect(url_for("manager_dashboard"))
 
         flash("Invalid manager credentials.", "danger")
         return redirect(url_for("manager_login"))
@@ -2277,11 +2341,6 @@ def rate_service(order_id):
     return redirect(url_for("track_order", order_id=order_id))
 
 
-@app.route("/admin_login", methods=["GET", "POST"])
-def admin_login():
-    return redirect(url_for("manager_login"))
-
-
 @app.route("/admin_logout")
 def admin_logout():
     return redirect(url_for("logout"))
@@ -2322,7 +2381,7 @@ def notifications_center():
             "SELECT * FROM notifications WHERE target_type = 'customer' AND target_id = ? ORDER BY created_at DESC LIMIT 100",
             (str(session.get("user_id")),),
         )
-    elif role == "manager":
+    elif role in ("admin", "manager"):
         notifications = query_db(
             "SELECT * FROM notifications WHERE target_type = 'manager' AND target_id = 'global' ORDER BY created_at DESC LIMIT 100"
         )
@@ -2346,7 +2405,7 @@ def notifications_api():
             "SELECT * FROM notifications WHERE target_type = 'customer' AND target_id = ? ORDER BY created_at DESC LIMIT 50",
             (str(session.get("user_id")),),
         )
-    elif role == "manager":
+    elif role in ("admin", "manager"):
         notifications = query_db(
             "SELECT * FROM notifications WHERE target_type = 'manager' AND target_id = 'global' ORDER BY created_at DESC LIMIT 50"
         )
@@ -2385,7 +2444,7 @@ def notifications_mark_read_api():
             "UPDATE notifications SET is_read = 1 WHERE target_type = 'customer' AND target_id = ?",
             (str(session.get("user_id")),),
         )
-    elif role == "manager":
+    elif role in ("admin", "manager"):
         db.execute("UPDATE notifications SET is_read = 1 WHERE target_type = 'manager' AND target_id = 'global'")
     elif role == "delivery_partner" and session.get("staff_name"):
         db.execute(
@@ -2399,9 +2458,75 @@ def notifications_mark_read_api():
 
 
 @app.route("/admin")
-@app.route("/manager/dashboard")
+@app.route("/admin/dashboard")
 @admin_required
 def admin_dashboard():
+    update_due_delivery_statuses()
+    foods = query_db("SELECT * FROM foods ORDER BY id DESC")
+    order_stats = query_db(
+        '''
+        SELECT
+            COUNT(*) AS total_orders,
+            SUM(CASE WHEN status = 'Delivered' THEN 1 ELSE 0 END) AS delivered_orders,
+            SUM(CASE WHEN status NOT IN ('Delivered', 'Cancelled', 'Rejected') THEN 1 ELSE 0 END) AS active_orders
+        FROM orders
+        ''',
+        one=True,
+    )
+    delivery_panel = query_db(
+        '''
+        SELECT
+            o.delivery_person,
+            COUNT(*) AS assigned_orders,
+            SUM(CASE WHEN o.status = 'Delivered' THEN 1 ELSE 0 END) AS delivered_orders,
+            SUM(CASE WHEN o.status NOT IN ('Delivered', 'Cancelled', 'Rejected') THEN 1 ELSE 0 END) AS active_orders,
+            COALESCE(
+                (
+                    SELECT o2.status
+                    FROM orders o2
+                    WHERE o2.delivery_person = o.delivery_person
+                    ORDER BY o2.created_at DESC
+                    LIMIT 1
+                ),
+                'Idle'
+            ) AS latest_status
+        FROM orders o
+        WHERE o.delivery_person IS NOT NULL AND TRIM(o.delivery_person) != ''
+        GROUP BY o.delivery_person
+        ORDER BY active_orders DESC, assigned_orders DESC
+        '''
+    )
+    realtime_token = build_live_token(
+        {
+            "stats": {
+                "total": order_stats["total_orders"] or 0,
+                "active": order_stats["active_orders"] or 0,
+                "delivered": order_stats["delivered_orders"] or 0,
+            },
+            "panel": [
+                {
+                    "delivery_person": row["delivery_person"],
+                    "latest_status": row["latest_status"],
+                    "active_orders": row["active_orders"] or 0,
+                    "delivered_orders": row["delivered_orders"] or 0,
+                    "assigned_orders": row["assigned_orders"] or 0,
+                }
+                for row in delivery_panel
+            ],
+        }
+    )
+    return render_template(
+        "admin_dashboard.html",
+        foods=foods,
+        order_stats=order_stats,
+        delivery_panel=delivery_panel,
+        realtime_token=realtime_token,
+    )
+
+
+@app.route("/manager/dashboard")
+@manager_required
+def manager_dashboard():
     update_due_delivery_statuses()
     foods = query_db("SELECT * FROM foods ORDER BY id DESC")
     order_stats = query_db(
@@ -2467,7 +2592,7 @@ def admin_dashboard():
 
 @app.route("/admin/orders")
 @app.route("/manager/orders")
-@admin_required
+@staff_order_required
 def admin_orders():
     update_due_delivery_statuses()
     orders = query_db(
@@ -2635,7 +2760,7 @@ def delete_food(food_id):
 
 @app.route("/admin/order/status/<int:order_id>/<status>")
 @app.route("/manager/order/status/<int:order_id>/<status>")
-@admin_required
+@staff_order_required
 def update_order_status(order_id, status):
     db = get_db()
     order = db.execute("SELECT id, status FROM orders WHERE id = ?", (order_id,)).fetchone()

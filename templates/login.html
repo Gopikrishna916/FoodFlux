@@ -13,6 +13,7 @@
                 </div>
 
                 <form method="post" class="js-login-form" novalidate>
+                    <input type="hidden" name="next" value="{{ request.args.get('next', '') }}" />
                     <div class="mb-3">
                         <label class="form-label">Email Address</label>
                         <div class="input-group auth-input-group">
@@ -62,6 +63,7 @@
 
                 <form id="customerMobileLoginForm" class="js-mobile-auth-form" data-purpose="login">
                     <input type="hidden" name="purpose" value="login" />
+                    <input type="hidden" name="next" value="{{ request.args.get('next', '') }}" />
                     <div class="mb-3">
                         <label class="form-label">Mobile Number</label>
                         <div class="input-group auth-input-group">

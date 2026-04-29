@@ -11,3 +11,5 @@ services:
         value: 3.10.9
       - key: OTP_SMS_PROVIDER
         value: mock
+      - key: USE_REAL_SMS
+        value: false

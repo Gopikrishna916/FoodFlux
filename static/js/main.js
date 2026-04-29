@@ -339,6 +339,12 @@ document.addEventListener("DOMContentLoaded", function () {
                 showLiveToast("OTP sent", response.message || "OTP generated successfully.", "alert-success");
                 if (response.dev_otp) {
                     showLiveToast("Development OTP", `Use code ${response.dev_otp} while testing locally.`, "alert-info");
+                    window.setTimeout(function () {
+                        const otpField = form.querySelector('input[name="otp_code"]');
+                        if (otpField) {
+                            otpField.value = response.dev_otp;
+                        }
+                    }, 1200);
                 }
             })
             .catch(function (error) {
@@ -359,10 +365,14 @@ document.addEventListener("DOMContentLoaded", function () {
         const role = (formData.get("role") || form.getAttribute("data-role") || "").toString().trim();
         const password = (formData.get("password") || "").toString();
         const fullName = (formData.get("full_name") || formData.get("name") || "").toString().trim();
+        const nextUrl = (formData.get("next") || "").toString().trim();
 
         const sharedPayload = { purpose, mobile_number: mobileNumber };
         if (role) {
             sharedPayload.role = role;
+        }
+        if (nextUrl) {
+            sharedPayload.next = nextUrl;
         }
 
         function verifyOtpIfNeeded() {
@@ -407,11 +417,13 @@ document.addEventListener("DOMContentLoaded", function () {
             if (otpCode) {
                 return postJson("/api/auth/mobile/login-otp", {
                     mobile_number: mobileNumber,
+                    next: nextUrl,
                 });
             }
             return postJson("/api/auth/mobile/login", {
                 mobile_number: mobileNumber,
                 password,
+                next: nextUrl,
             });
         }
 

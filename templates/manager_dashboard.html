@@ -4,10 +4,9 @@
 <div class="d-flex justify-content-between align-items-center mb-4">
     <div>
         <h2>Hotel Manager Dashboard</h2>
-        <p class="text-muted">Manage menu items, orders, and delivery operations in real time.</p>
+        <p class="text-muted">Monitor live orders, delivery flow, and operational status in real time.</p>
     </div>
     <div class="d-flex flex-wrap gap-2">
-        <a href="{{ url_for('admin_foods') }}" class="btn btn-primary">Add New Food</a>
         <a href="{{ url_for('admin_orders') }}" class="btn btn-outline-secondary">View Orders</a>
     </div>
 </div>
@@ -92,7 +91,6 @@
                 <th>Category</th>
                 <th>Price</th>
                 <th>Description</th>
-                <th>Actions</th>
             </tr>
         </thead>
         <tbody>
@@ -110,12 +108,6 @@
                 <td>{{ food.category }}</td>
                 <td>₹{{ "%.2f" | format(food.price) }}</td>
                 <td>{{ food.description[:50] }}{% if food.description|length > 50 %}...{% endif %}</td>
-                <td>
-                    <a href="{{ url_for('admin_foods') }}" class="btn btn-sm btn-outline-primary">Manage</a>
-                    <form class="d-inline" method="post" action="{{ url_for('delete_food', food_id=food.id) }}" onsubmit="return confirm('Delete this item?');">
-                        <button type="submit" class="btn btn-sm btn-outline-danger">Delete</button>
-                    </form>
-                </td>
             </tr>
             {% endfor %}
         </tbody>
