@@ -48,6 +48,10 @@ MANAGER_MOBILE = os.environ.get("MANAGER_MOBILE", "9000000001")
 
 MANAGER_EMAIL = os.environ.get("MANAGER_EMAIL", ADMIN_EMAIL)
 MANAGER_PASSWORD = os.environ.get("MANAGER_PASSWORD", ADMIN_PASSWORD)
+
+RESTAURANT_EMAIL = os.environ.get("RESTAURANT_EMAIL", "restaurant@ckfood.com")
+RESTAURANT_PASSWORD = os.environ.get("RESTAURANT_PASSWORD", "restaurant123")
+RESTAURANT_MOBILE = os.environ.get("RESTAURANT_MOBILE", "9000000099")
 OTP_REQUEST_COOLDOWN_SECONDS = 30
 OTP_MAX_REQUESTS = 5
 OTP_REQUEST_WINDOW_MINUTES = 15
@@ -408,7 +412,9 @@ def ensure_performance_indexes(db):
 def seed_staff_users(db):
     manager_password_hash = generate_password_hash(MANAGER_PASSWORD)
     admin_password_hash = generate_password_hash(ADMIN_PASSWORD)
+    restaurant_password_hash = generate_password_hash(RESTAURANT_PASSWORD)
     manager_mobile = normalize_mobile(MANAGER_MOBILE) or MANAGER_MOBILE
+    restaurant_mobile = normalize_mobile(RESTAURANT_MOBILE) or RESTAURANT_MOBILE
     existing_staff_rows = db.execute("SELECT email, mobile_number FROM staff_users").fetchall()
     existing_emails = {row["email"].lower() for row in existing_staff_rows}
     existing_mobiles = {normalize_mobile(row["mobile_number"]) for row in existing_staff_rows if row["mobile_number"]}
@@ -434,6 +440,20 @@ def seed_staff_users(db):
             (manager_mobile, MANAGER_EMAIL.lower()),
         )
         existing_mobiles.add(manager_mobile)
+
+    if RESTAURANT_EMAIL.lower() not in existing_emails:
+        db.execute(
+            "INSERT INTO staff_users (name, email, mobile_number, mobile_verified, password, role) VALUES (?, ?, ?, 1, ?, ?)",
+            ("FoodFlux Restaurant", RESTAURANT_EMAIL, restaurant_mobile, restaurant_password_hash, "restaurant"),
+        )
+        existing_emails.add(RESTAURANT_EMAIL.lower())
+        existing_mobiles.add(restaurant_mobile)
+    elif restaurant_mobile not in existing_mobiles:
+        db.execute(
+            "UPDATE staff_users SET mobile_number = ?, mobile_verified = 1 WHERE LOWER(email) = ? AND (mobile_number IS NULL OR TRIM(mobile_number) = '')",
+            (restaurant_mobile, RESTAURANT_EMAIL.lower()),
+        )
+        existing_mobiles.add(restaurant_mobile)
 
     for name, email, password, mobile_number in DELIVERY_STAFF:
         if email.lower() not in existing_emails:
@@ -898,6 +918,10 @@ def delivery_required(func):
     return role_required("delivery_partner")(func)
 
 
+def restaurant_required(func):
+    return role_required("restaurant")(func)
+
+
 def customer_required(func):
     return role_required("customer")(func)
 
@@ -1124,7 +1148,7 @@ def clear_otp_rate_state(recipient, purpose):
 
 
 def staff_role_is_valid(role):
-    return role in {"admin", "manager", "delivery_partner"}
+    return role in {"admin", "manager", "restaurant", "delivery_partner"}
 
 
 def set_staff_session(staff):
@@ -1250,6 +1274,12 @@ def get_unread_notification_count():
     if role in ("admin", "manager"):
         row = query_db(
             "SELECT COUNT(*) AS c FROM notifications WHERE target_type = 'manager' AND target_id = 'global' AND is_read = 0",
+            one=True,
+        )
+        return row["c"] if row else 0
+    if role == "restaurant" and session.get("staff_name"):
+        row = query_db(
+            "SELECT COUNT(*) AS c FROM notifications WHERE target_type = 'restaurant' AND target_id = 'global' AND is_read = 0",
             one=True,
         )
         return row["c"] if row else 0
@@ -1650,6 +1680,8 @@ def login():
         return redirect(url_for("manager_dashboard"))
     if session.get("account_role") == "admin" and session.get("staff_id"):
         return redirect(url_for("admin_dashboard"))
+    if session.get("account_role") == "restaurant" and session.get("staff_id"):
+        return redirect(url_for("restaurant_dashboard"))
     if session.get("account_role") == "delivery_partner" and session.get("staff_id"):
         return redirect(url_for("delivery_dashboard"))
 
@@ -1708,6 +1740,39 @@ def admin_login():
         return redirect(url_for("admin_login"))
 
     return render_template("admin_login.html")
+
+
+@app.route("/restaurant/login", methods=["GET", "POST"])
+def restaurant_login():
+    if session.get("account_role") == "restaurant" and session.get("staff_id"):
+        return redirect(url_for("restaurant_dashboard"))
+
+    if request.method == "POST":
+        email = (request.form.get("email") or "").strip().lower()
+        password = request.form.get("password") or ""
+
+        if not email or not password:
+            flash("Email and password are required.", "danger")
+            return redirect(url_for("restaurant_login"))
+
+        staff = query_db(
+            "SELECT id, name, email, role, password FROM staff_users WHERE LOWER(email) = ? AND role = 'restaurant' AND is_active = 1",
+            (email,),
+            one=True,
+        )
+        if staff and check_password_hash(staff["password"], password):
+            session["staff_id"] = staff["id"]
+            session["staff_name"] = staff["name"]
+            session["staff_email"] = staff["email"]
+            session["staff_role"] = staff["role"]
+            session["account_role"] = "restaurant"
+            flash(f"Welcome, {staff['name']}!", "success")
+            return redirect(url_for("restaurant_dashboard"))
+
+        flash("Invalid restaurant credentials.", "danger")
+        return redirect(url_for("restaurant_login"))
+
+    return render_template("restaurant_login.html")
 
 
 @app.route("/customer/dashboard")
@@ -2385,6 +2450,10 @@ def notifications_center():
         notifications = query_db(
             "SELECT * FROM notifications WHERE target_type = 'manager' AND target_id = 'global' ORDER BY created_at DESC LIMIT 100"
         )
+    elif role == "restaurant" and session.get("staff_name"):
+        notifications = query_db(
+            "SELECT * FROM notifications WHERE target_type = 'restaurant' AND target_id = 'global' ORDER BY created_at DESC LIMIT 100"
+        )
     elif role == "delivery_partner" and session.get("staff_name"):
         notifications = query_db(
             "SELECT * FROM notifications WHERE target_type = 'delivery_partner' AND target_id = ? ORDER BY created_at DESC LIMIT 100",
@@ -2408,6 +2477,10 @@ def notifications_api():
     elif role in ("admin", "manager"):
         notifications = query_db(
             "SELECT * FROM notifications WHERE target_type = 'manager' AND target_id = 'global' ORDER BY created_at DESC LIMIT 50"
+        )
+    elif role == "restaurant" and session.get("staff_name"):
+        notifications = query_db(
+            "SELECT * FROM notifications WHERE target_type = 'restaurant' AND target_id = 'global' ORDER BY created_at DESC LIMIT 50"
         )
     elif role == "delivery_partner" and session.get("staff_name"):
         notifications = query_db(
@@ -2446,6 +2519,8 @@ def notifications_mark_read_api():
         )
     elif role in ("admin", "manager"):
         db.execute("UPDATE notifications SET is_read = 1 WHERE target_type = 'manager' AND target_id = 'global'")
+    elif role == "restaurant" and session.get("staff_name"):
+        db.execute("UPDATE notifications SET is_read = 1 WHERE target_type = 'restaurant' AND target_id = 'global'")
     elif role == "delivery_partner" and session.get("staff_name"):
         db.execute(
             "UPDATE notifications SET is_read = 1 WHERE target_type = 'delivery_partner' AND target_id = ?",
@@ -2586,6 +2661,63 @@ def manager_dashboard():
         foods=foods,
         order_stats=order_stats,
         delivery_panel=delivery_panel,
+        realtime_token=realtime_token,
+    )
+
+
+@app.route("/restaurant/dashboard")
+@restaurant_required
+def restaurant_dashboard():
+    update_due_delivery_statuses()
+    foods = query_db("SELECT * FROM foods ORDER BY id DESC")
+    order_stats = query_db(
+        '''
+        SELECT
+            COUNT(*) AS total_orders,
+            SUM(CASE WHEN status IN ('Preparing Food', 'Ready for Pickup') THEN 1 ELSE 0 END) AS active_orders,
+            SUM(CASE WHEN status = 'Delivered' THEN 1 ELSE 0 END) AS completed_orders
+        FROM orders
+        ''',
+        one=True,
+    )
+    restaurant_orders = query_db(
+        '''
+        SELECT
+            o.id, o.status, COUNT(oi.id) as items_count, SUM(oi.qty) as total_qty,
+            o.created_at, o.customer_name, o.phone, o.delivery_person
+        FROM orders o
+        LEFT JOIN order_items oi ON o.id = oi.order_id
+        WHERE o.status NOT IN ('Delivered', 'Cancelled', 'Rejected')
+        GROUP BY o.id
+        ORDER BY o.created_at DESC
+        '''
+    )
+    realtime_token = build_live_token(
+        {
+            "stats": {
+                "total": order_stats["total_orders"] or 0,
+                "active": order_stats["active_orders"] or 0,
+                "completed": order_stats["completed_orders"] or 0,
+            },
+            "orders": [
+                {
+                    "id": row["id"],
+                    "status": row["status"],
+                    "customer": row["customer_name"],
+                    "phone": row["phone"],
+                    "items": row["items_count"],
+                    "qty": row["total_qty"],
+                    "created_at": row["created_at"],
+                }
+                for row in restaurant_orders
+            ],
+        }
+    )
+    return render_template(
+        "restaurant_dashboard.html",
+        foods=foods,
+        order_stats=order_stats,
+        restaurant_orders=restaurant_orders,
         realtime_token=realtime_token,
     )
 
@@ -3156,6 +3288,37 @@ def live_manager_orders():
             ],
         }
     )
+
+
+@app.route("/api/live/restaurant/dashboard")
+@restaurant_required
+def live_restaurant_dashboard():
+    cache_key = "live:restaurant:dashboard"
+    cached = cache_get(cache_key)
+    if cached is not None:
+        return jsonify({"token": cached})
+    update_due_delivery_statuses()
+    order_stats = query_db(
+        '''
+        SELECT
+            COUNT(*) AS total_orders,
+            SUM(CASE WHEN status IN ('Preparing Food', 'Ready for Pickup') THEN 1 ELSE 0 END) AS active_orders,
+            SUM(CASE WHEN status = 'Delivered' THEN 1 ELSE 0 END) AS completed_orders
+        FROM orders
+        ''',
+        one=True,
+    )
+    token = build_live_token(
+        {
+            "stats": {
+                "total": order_stats["total_orders"] or 0,
+                "active": order_stats["active_orders"] or 0,
+                "completed": order_stats["completed_orders"] or 0,
+            },
+        }
+    )
+    cache_set(cache_key, token, ttl_seconds=4)
+    return jsonify({"token": token})
 
 
 @app.route("/api/live/delivery/dashboard")
