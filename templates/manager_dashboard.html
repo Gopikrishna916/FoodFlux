@@ -17,7 +17,7 @@
         <div class="card shadow-sm border-0 bg-light h-100">
             <div class="card-body">
                 <div class="text-muted small">Total Orders</div>
-                <div class="fs-3 fw-bold">{{ order_stats.total_orders or 0 }}</div>
+                <div class="fs-3 fw-bold js-manager-total-orders" id="managerOrderTotal">{{ order_stats.total_orders or 0 }}</div>
             </div>
         </div>
     </div>
@@ -25,7 +25,7 @@
         <div class="card shadow-sm border-0 bg-light h-100">
             <div class="card-body">
                 <div class="text-muted small">Active Orders</div>
-                <div class="fs-3 fw-bold text-primary">{{ order_stats.active_orders or 0 }}</div>
+                <div class="fs-3 fw-bold text-primary js-manager-active-orders" id="managerActiveOrders">{{ order_stats.active_orders or 0 }}</div>
             </div>
         </div>
     </div>
@@ -33,7 +33,7 @@
         <div class="card shadow-sm border-0 bg-light h-100">
             <div class="card-body">
                 <div class="text-muted small">Delivered Orders</div>
-                <div class="fs-3 fw-bold text-success">{{ order_stats.delivered_orders or 0 }}</div>
+                <div class="fs-3 fw-bold text-success js-manager-delivered-orders" id="managerDeliveredOrders">{{ order_stats.delivered_orders or 0 }}</div>
             </div>
         </div>
     </div>
@@ -56,7 +56,7 @@
                         <th>Total Assigned</th>
                     </tr>
                 </thead>
-                <tbody>
+                <tbody id="managerDeliveryPanelBody">
                     {% if delivery_panel %}
                         {% for member in delivery_panel %}
                         <tr>

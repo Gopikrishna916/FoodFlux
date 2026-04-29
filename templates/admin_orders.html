@@ -48,11 +48,16 @@
                 <td>{{ order.phone }}</td>
                 <td>
                     <div class="d-flex flex-wrap gap-1">
+                        {% if order.status == 'Order Placed' %}
                         <a href="{{ url_for('update_order_status', order_id=order.id, status='Order Accepted') }}" class="btn btn-sm btn-outline-success">Accept</a>
-                        <a href="{{ url_for('update_order_status', order_id=order.id, status='Preparing Food') }}" class="btn btn-sm btn-outline-warning">Preparing</a>
-                        <a href="{{ url_for('update_order_status', order_id=order.id, status='Ready for Pickup') }}" class="btn btn-sm btn-outline-info">Ready</a>
                         <a href="{{ url_for('update_order_status', order_id=order.id, status='Rejected') }}" class="btn btn-sm btn-outline-danger">Reject</a>
-                        <a href="{{ url_for('update_order_status', order_id=order.id, status='Delivered') }}" class="btn btn-sm btn-outline-success">Delivered</a>
+                        {% elif order.status == 'Order Accepted' %}
+                        <a href="{{ url_for('update_order_status', order_id=order.id, status='Preparing Food') }}" class="btn btn-sm btn-outline-warning">Preparing</a>
+                        <a href="{{ url_for('update_order_status', order_id=order.id, status='Cancelled') }}" class="btn btn-sm btn-outline-danger">Cancel</a>
+                        {% elif order.status == 'Preparing Food' %}
+                        <a href="{{ url_for('update_order_status', order_id=order.id, status='Ready for Pickup') }}" class="btn btn-sm btn-outline-info">Ready</a>
+                        <a href="{{ url_for('update_order_status', order_id=order.id, status='Cancelled') }}" class="btn btn-sm btn-outline-danger">Cancel</a>
+                        {% endif %}
                     </div>
                 </td>
             </tr>

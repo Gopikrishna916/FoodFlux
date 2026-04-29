@@ -590,6 +590,9 @@ document.addEventListener("DOMContentLoaded", function () {
         if (status === "On the Way" || status === "Picked Up") {
             return "badge bg-primary order-status-badge";
         }
+        if (status === "Near Customer") {
+            return "badge bg-warning text-dark order-status-badge";
+        }
         if (status === "Order Accepted" || status === "Preparing Food" || status === "Ready for Pickup" || status === "Rider Assigned") {
             return "badge bg-info text-dark order-status-badge";
         }
@@ -605,6 +608,9 @@ document.addEventListener("DOMContentLoaded", function () {
         }
         if (status === "On the Way" || status === "Picked Up") {
             return { text: "On Route", klass: "badge bg-primary delivery-panel-badge" };
+        }
+        if (status === "Near Customer") {
+            return { text: "Near Customer", klass: "badge bg-warning text-dark delivery-panel-badge" };
         }
         if (status === "Ready for Pickup") {
             return { text: "Ready to Dispatch", klass: "badge bg-info text-dark delivery-panel-badge" };
@@ -663,6 +669,219 @@ document.addEventListener("DOMContentLoaded", function () {
 
         if (options.removeOnDelivered && payload.status === "Delivered") {
             row.remove();
+        }
+    }
+
+    function renderManagerActions(order) {
+        const actions = [];
+        if (order.status === "Order Placed") {
+            actions.push({ label: "Accept", status: "Order Accepted", klass: "btn-outline-success" });
+            actions.push({ label: "Reject", status: "Rejected", klass: "btn-outline-danger" });
+        } else if (order.status === "Order Accepted") {
+            actions.push({ label: "Preparing", status: "Preparing Food", klass: "btn-outline-warning" });
+            actions.push({ label: "Cancel", status: "Cancelled", klass: "btn-outline-danger" });
+        } else if (order.status === "Preparing Food") {
+            actions.push({ label: "Ready", status: "Ready for Pickup", klass: "btn-outline-info" });
+            actions.push({ label: "Cancel", status: "Cancelled", klass: "btn-outline-danger" });
+        }
+
+        return actions.map((action) => `<a href="/admin/order/status/${order.id}/${encodeURIComponent(action.status)}" class="btn btn-sm ${action.klass}">${action.label}</a>`).join("");
+    }
+
+    function renderDeliveryActions(order) {
+        const actions = [];
+        if (order.status === "Ready for Pickup") {
+            actions.push({ label: "Accept", status: "Accept", klass: "btn-outline-success" });
+            actions.push({ label: "Reject", status: "Reject", klass: "btn-outline-danger" });
+        } else if (order.status === "Rider Assigned") {
+            actions.push({ label: "Picked", status: "Picked Up", klass: "btn-outline-info" });
+        } else if (order.status === "Picked Up") {
+            actions.push({ label: "On Way", status: "On the Way", klass: "btn-outline-primary" });
+        } else if (order.status === "On the Way") {
+            actions.push({ label: "Near", status: "Near Customer", klass: "btn-outline-warning" });
+        } else if (order.status === "Near Customer") {
+            actions.push({ label: "Done", status: "Delivered", klass: "btn-outline-success" });
+        }
+
+        return actions.map((action) => `<a href="/delivery/order/status/${order.id}/${encodeURIComponent(action.status)}" class="btn btn-sm ${action.klass}">${action.label}</a>`).join("");
+    }
+
+    function renderManagerOrderRow(order) {
+        const status = order.status || "";
+        const statusClass = statusBadgeClass(status);
+        const deliveryPerson = order.delivery_person || "Not Assigned";
+        const panel = panelStatusLabel(status);
+        const actions = renderManagerActions(order);
+        return `
+            <tr data-order-id="${order.id}">
+                <td>${order.id}</td>
+                <td>${order.customer_name || "Guest"}<br><small>${order.customer_email || ""}</small></td>
+                <td>₹${Number(order.total || 0).toFixed(2)}</td>
+                <td>${order.payment || ""}</td>
+                <td><span class="${statusClass}">${status}</span></td>
+                <td class="delivery-person-cell">${deliveryPerson}</td>
+                <td><span class="badge delivery-panel-badge ${panel.klass.replace("badge ", "")}">${panel.text}</span></td>
+                <td>${order.address || ""}</td>
+                <td>${order.phone || ""}</td>
+                <td><div class="d-flex flex-wrap gap-1">${actions}</div></td>
+            </tr>
+        `;
+    }
+
+    function renderDeliveryOrderRow(order) {
+        const status = order.status || "";
+        const statusClass = statusBadgeClass(status);
+        const actions = renderDeliveryActions(order);
+        return `
+            <tr data-order-id="${order.id}">
+                <td>#${order.id}</td>
+                <td>${order.customer_name || "Customer"}<br><small class="text-muted">${order.customer_email || ""}</small></td>
+                <td><span class="${statusClass}">${status}</span></td>
+                <td>${order.address || ""}</td>
+                <td>${order.phone || ""}</td>
+                <td><div class="d-flex flex-wrap gap-1">${actions}</div></td>
+            </tr>
+        `;
+    }
+
+    function renderCustomerOrders(orders) {
+        const table = document.getElementById("customerOrdersTable");
+        if (!table) {
+            return;
+        }
+        const tbody = table.querySelector("tbody");
+        if (!tbody) {
+            return;
+        }
+
+        if (!orders || !orders.length) {
+            tbody.innerHTML = '<tr><td colspan="6" class="text-center text-muted">No orders yet. Start by browsing the menu.</td></tr>';
+            return;
+        }
+
+        tbody.innerHTML = orders.map((order) => `
+            <tr data-order-id="${order.id}">
+                <td>#${order.id}</td>
+                <td><span class="${statusBadgeClass(order.status)}">${order.status}</span></td>
+                <td class="delivery-person-cell">${order.delivery_person || "Assigning..."}</td>
+                <td>₹${Number(order.total || 0).toFixed(2)}</td>
+                <td>${order.created_at || ""}</td>
+                <td><a href="/track_order/${order.id}" class="btn btn-sm btn-outline-primary">Track</a></td>
+            </tr>
+        `).join("");
+        updateCustomerCounters();
+    }
+
+    function renderManagerOrders(orders) {
+        const table = document.getElementById("managerOrdersTable");
+        if (!table) {
+            return;
+        }
+        const tbody = table.querySelector("tbody");
+        if (!tbody) {
+            return;
+        }
+        if (!orders || !orders.length) {
+            tbody.innerHTML = '<tr><td colspan="10" class="text-center text-muted">No live orders right now.</td></tr>';
+            return;
+        }
+        tbody.innerHTML = orders.map(renderManagerOrderRow).join("");
+    }
+
+    function renderManagerPanel(panelRows) {
+        const body = document.getElementById("managerDeliveryPanelBody");
+        if (!body) {
+            return;
+        }
+        if (!panelRows || !panelRows.length) {
+            body.innerHTML = '<tr><td colspan="5" class="text-center text-muted">No delivery assignments yet.</td></tr>';
+            return;
+        }
+
+        body.innerHTML = panelRows.map((row) => {
+            const status = row.latest_status || "Idle";
+            const badgeClass = status === "Delivered"
+                ? "badge bg-success"
+                : (status === "On the Way" || status === "Picked Up")
+                    ? "badge bg-primary"
+                    : (status === "Near Customer")
+                        ? "badge bg-warning text-dark"
+                        : (status === "Ready for Pickup" || status === "Order Accepted" || status === "Rider Assigned")
+                            ? "badge bg-info text-dark"
+                            : (status === "Cancelled" || status === "Rejected")
+                                ? "badge bg-danger"
+                                : "badge bg-secondary";
+            return `
+                <tr>
+                    <td>${row.delivery_person || "-"}</td>
+                        <td><span class="${badgeClass}">${status}</span></td>
+                    <td>${row.active_orders || 0}</td>
+                    <td>${row.delivered_orders || 0}</td>
+                    <td>${row.assigned_orders || 0}</td>
+                </tr>
+            `;
+        }).join("");
+    }
+
+    function renderDeliveryOrders(orders) {
+        const table = document.getElementById("deliveryOrdersTable");
+        if (!table) {
+            return;
+        }
+        const tbody = table.querySelector("tbody");
+        if (!tbody) {
+            return;
+        }
+        if (!orders || !orders.length) {
+            tbody.innerHTML = '<tr><td colspan="6" class="text-center text-muted">No orders assigned yet.</td></tr>';
+            return;
+        }
+        tbody.innerHTML = orders.map(renderDeliveryOrderRow).join("");
+        updateDeliveryCounters();
+    }
+
+    function updateLiveDashboard(payload) {
+        if (!payload || !payload.kind) {
+            return;
+        }
+
+        if (payload.kind === "customer_dashboard") {
+            const summary = payload.summary || {};
+            const totalEl = document.getElementById("customerTotalOrders");
+            const activeEl = document.getElementById("customerActiveOrders");
+            const deliveredEl = document.getElementById("customerDeliveredOrders");
+            if (totalEl) totalEl.textContent = String(summary.total || 0);
+            if (activeEl) activeEl.textContent = String(summary.active || 0);
+            if (deliveredEl) deliveredEl.textContent = String(summary.delivered || 0);
+            renderCustomerOrders(payload.orders || []);
+        }
+
+        if (payload.kind === "manager_dashboard") {
+            const stats = payload.stats || {};
+            const totalEl = document.querySelector("#managerOrderTotal, #orderTotal, #adminTotalOrders, .js-manager-total-orders");
+            const activeEl = document.querySelector("#managerActiveOrders, #activeOrders, .js-manager-active-orders");
+            const deliveredEl = document.querySelector("#managerDeliveredOrders, #deliveredOrders, .js-manager-delivered-orders");
+            if (totalEl) totalEl.textContent = String(stats.total || 0);
+            if (activeEl) activeEl.textContent = String(stats.active || 0);
+            if (deliveredEl) deliveredEl.textContent = String(stats.delivered || 0);
+            renderManagerPanel(payload.panel || []);
+        }
+
+        if (payload.kind === "manager_orders") {
+            renderManagerOrders(payload.orders || []);
+        }
+
+        if (payload.kind === "delivery_dashboard") {
+            const stats = payload.stats || {};
+            const totalEl = document.getElementById("deliveryAssignedOrders");
+            const acceptedEl = document.getElementById("deliveryAcceptedOrders");
+            const activeEl = document.getElementById("deliveryActiveOrders");
+            const doneEl = document.getElementById("deliveryDoneOrders");
+            if (totalEl) totalEl.textContent = String(stats.total || 0);
+            if (acceptedEl) acceptedEl.textContent = String(stats.accepted || 0);
+            if (activeEl) activeEl.textContent = String(stats.active || 0);
+            if (doneEl) doneEl.textContent = String(stats.delivered || 0);
+            renderDeliveryOrders(payload.orders || []);
         }
     }
 
@@ -836,8 +1055,8 @@ document.addEventListener("DOMContentLoaded", function () {
                         return;
                     }
                     if (payload.token !== currentToken) {
+                        updateLiveDashboard(payload);
                         showLiveRefreshing();
-                        window.location.reload();
                     }
                     currentToken = payload.token;
                 })
@@ -856,7 +1075,9 @@ document.addEventListener("DOMContentLoaded", function () {
 
         const endpoint = watcher.getAttribute("data-live-endpoint");
         const partnerEl = document.getElementById("trackDeliveryPartner");
-        const timerDisplay = document.getElementById("timerDisplay");
+        const tracker = document.getElementById("liveTracker");
+        const phoneEl = document.getElementById("trackCustomerPhone");
+        const timelineText = document.getElementById("riderLiveLocationText");
         let lastSignature = "";
 
         if (!endpoint) {
@@ -883,7 +1104,7 @@ document.addEventListener("DOMContentLoaded", function () {
                     const nextSignature = [
                         payload.status || "",
                         payload.delivery_person || "",
-                        payload.estimated_delivery_time || "",
+                        payload.auto_delivered_at || "",
                     ].join("|");
 
                     if (lastSignature === "") {
@@ -899,26 +1120,43 @@ document.addEventListener("DOMContentLoaded", function () {
                         partnerEl.textContent = payload.delivery_person || "Assigning...";
                     }
 
-                    if (timerDisplay && payload.estimated_delivery_time) {
-                        timerDisplay.setAttribute("data-estimated-delivery", payload.estimated_delivery_time);
+                    const serviceRatingCard = document.getElementById("serviceRatingCard");
+                    const itemRatingForms = document.querySelectorAll(".js-item-rating-form");
+                    const showRatings = payload.status === "Delivered";
+                    if (serviceRatingCard) {
+                        serviceRatingCard.classList.toggle("d-none", !showRatings);
+                    }
+                    itemRatingForms.forEach((form) => {
+                        form.classList.toggle("d-none", !showRatings);
+                    });
+
+                    if (phoneEl) {
+                        phoneEl.textContent = payload.status === "Ready for Pickup" || payload.status === "Rider Assigned" || payload.status === "Picked Up" || payload.status === "On the Way" || payload.status === "Near Customer" || payload.status === "Delivered"
+                            ? (payload.phone || phoneEl.textContent)
+                            : "Hidden until order is Ready";
+                    }
+
+                    if (tracker) {
+                        const steps = Array.from(tracker.querySelectorAll(".live-tracker__step"));
+                        const currentIndex = ["Order Placed", "Order Accepted", "Preparing Food", "Ready for Pickup", "Picked Up", "On the Way", "Near Customer", "Delivered"].indexOf(payload.status);
+                        steps.forEach((step, index) => {
+                            const active = index <= currentIndex || (payload.status === "Rider Assigned" && step.getAttribute("data-step") === "Ready for Pickup");
+                            step.classList.toggle("is-active", active);
+                            const dot = step.querySelector(".live-tracker__dot");
+                            if (dot) {
+                                dot.textContent = active ? "✓" : "";
+                            }
+                        });
                     }
 
                     if (payload.rider_location && window.updateRiderMapMarker) {
                         window.updateRiderMapMarker(payload.rider_location.lat, payload.rider_location.lng);
-                        const mapStatus = document.getElementById("riderLiveLocationText");
-                        if (mapStatus) {
-                            mapStatus.textContent = `Rider location updated: ${payload.rider_location.lat.toFixed(5)}, ${payload.rider_location.lng.toFixed(5)}`;
+                        if (timelineText) {
+                            timelineText.textContent = `Rider location updated: ${payload.rider_location.lat.toFixed(5)}, ${payload.rider_location.lng.toFixed(5)}`;
                         }
                     }
 
                     if (nextSignature !== lastSignature) {
-                        const oldEta = parseDateSafe(lastSignature.split("|")[2]);
-                        const newEta = parseDateSafe(payload.estimated_delivery_time);
-                        if ((oldEta && newEta && oldEta.getTime() !== newEta.getTime()) || (!oldEta && newEta) || payload.status === "Delivered") {
-                            showLiveRefreshing();
-                            window.location.reload();
-                            return;
-                        }
                         lastSignature = nextSignature;
                     }
                 })

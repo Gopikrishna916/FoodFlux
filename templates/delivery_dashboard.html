@@ -76,15 +76,22 @@
                                     {{ order.status }}
                                 </span>
                             </td>
-                            <td>{{ order.address }}</td>
-                            <td>{{ order.phone }}</td>
+                            <td>{{ order.visible_address }}</td>
+                            <td>{{ order.visible_phone }}</td>
                             <td>
                                 <div class="d-flex flex-wrap gap-1">
+                                    {% if order.status == 'Ready for Pickup' %}
                                     <a href="{{ url_for('delivery_update_order_status', order_id=order.id, status='Accept') }}" class="btn btn-sm btn-outline-success">Accept</a>
                                     <a href="{{ url_for('delivery_update_order_status', order_id=order.id, status='Reject') }}" class="btn btn-sm btn-outline-danger">Reject</a>
+                                    {% elif order.status == 'Rider Assigned' %}
                                     <a href="{{ url_for('delivery_update_order_status', order_id=order.id, status='Picked Up') }}" class="btn btn-sm btn-outline-info">Picked</a>
+                                    {% elif order.status == 'Picked Up' %}
                                     <a href="{{ url_for('delivery_update_order_status', order_id=order.id, status='On the Way') }}" class="btn btn-sm btn-outline-primary">On Way</a>
+                                    {% elif order.status == 'On the Way' %}
+                                    <a href="{{ url_for('delivery_update_order_status', order_id=order.id, status='Near Customer') }}" class="btn btn-sm btn-outline-warning">Near</a>
+                                    {% elif order.status == 'Near Customer' %}
                                     <a href="{{ url_for('delivery_update_order_status', order_id=order.id, status='Delivered') }}" class="btn btn-sm btn-outline-success">Done</a>
+                                    {% endif %}
                                 </div>
                             </td>
                         </tr>

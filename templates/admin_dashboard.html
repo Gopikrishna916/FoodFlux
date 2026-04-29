@@ -16,7 +16,7 @@
         <div class="card shadow-sm border-0 bg-light h-100">
             <div class="card-body">
                 <div class="text-muted small">Total Orders</div>
-                <div class="fs-3 fw-bold">{{ order_stats.total_orders or 0 }}</div>
+                <div class="fs-3 fw-bold js-admin-total-orders" id="adminOrderTotal">{{ order_stats.total_orders or 0 }}</div>
             </div>
         </div>
     </div>
@@ -24,7 +24,7 @@
         <div class="card shadow-sm border-0 bg-light h-100">
             <div class="card-body">
                 <div class="text-muted small">Active Orders</div>
-                <div class="fs-3 fw-bold text-primary">{{ order_stats.active_orders or 0 }}</div>
+                <div class="fs-3 fw-bold text-primary js-admin-active-orders" id="adminActiveOrders">{{ order_stats.active_orders or 0 }}</div>
             </div>
         </div>
     </div>
@@ -32,7 +32,7 @@
         <div class="card shadow-sm border-0 bg-light h-100">
             <div class="card-body">
                 <div class="text-muted small">Delivered Orders</div>
-                <div class="fs-3 fw-bold text-success">{{ order_stats.delivered_orders or 0 }}</div>
+                <div class="fs-3 fw-bold text-success js-admin-delivered-orders" id="adminDeliveredOrders">{{ order_stats.delivered_orders or 0 }}</div>
             </div>
         </div>
     </div>

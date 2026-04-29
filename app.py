@@ -12,7 +12,6 @@ from urllib.error import URLError, HTTPError
 from io import BytesIO
 from datetime import datetime, timedelta
 from flask import Flask, render_template, request, redirect, url_for, flash, session, g, jsonify
-from flask_socketio import SocketIO, join_room
 from werkzeug.security import generate_password_hash, check_password_hash
 from werkzeug.utils import secure_filename
 try:
@@ -22,7 +21,6 @@ except ImportError:
 
 app = Flask(__name__)
 app.secret_key = os.environ.get("SECRET_KEY", "supersecretkey_for_demo_only")
-socketio = SocketIO(app, cors_allowed_origins="*", async_mode="threading")
 app.config["SEND_FILE_MAX_AGE_DEFAULT"] = int(os.environ.get("STATIC_CACHE_SECONDS", "86400"))
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -89,6 +87,59 @@ FOOD_CATALOG = [
     ("Fish Curry", "Non-Veg", 349, "images/fish_curry.png", "Spicy fish curry served with rice."),
     ("Vanilla Ice Cream", "Desserts", 99, "images/vanilla_ice_cream.png", "Creamy vanilla ice cream scoop."),
 ]
+
+MANAGER_WORKFLOW = {
+    "Order Placed": ["Order Accepted", "Rejected"],
+    "Order Accepted": ["Preparing Food", "Cancelled"],
+    "Preparing Food": ["Ready for Pickup", "Cancelled"],
+    "Ready for Pickup": [],
+    "Rider Assigned": [],
+    "Picked Up": [],
+    "On the Way": [],
+    "Near Customer": [],
+    "Delivered": [],
+    "Rejected": [],
+    "Cancelled": [],
+}
+
+DELIVERY_ACTION_WORKFLOW = {
+    "Ready for Pickup": ["Accept", "Reject"],
+    "Rider Assigned": ["Picked Up"],
+    "Picked Up": ["On the Way"],
+    "On the Way": ["Near Customer"],
+    "Near Customer": ["Delivered"],
+}
+
+TRACKER_STEPS = [
+    "Order Placed",
+    "Order Accepted",
+    "Preparing Food",
+    "Ready for Pickup",
+    "Picked Up",
+    "On the Way",
+    "Near Customer",
+    "Delivered",
+]
+
+
+def status_step_index(status):
+    if status in TRACKER_STEPS:
+        return TRACKER_STEPS.index(status)
+    if status == "Rider Assigned":
+        return TRACKER_STEPS.index("Ready for Pickup")
+    return -1
+
+
+def manager_allowed_actions(status):
+    return MANAGER_WORKFLOW.get(status, [])
+
+
+def delivery_allowed_actions(status):
+    return DELIVERY_ACTION_WORKFLOW.get(status, [])
+
+
+def customer_details_visible_for_delivery(status):
+    return status in {"Ready for Pickup", "Rider Assigned", "Picked Up", "On the Way", "Near Customer", "Delivered"}
 
 
 def get_db():
@@ -472,7 +523,7 @@ def get_order_payload(order_id):
     }
 
 
-def status_to_socket_event(status):
+def status_to_live_event(status):
     status_map = {
         "Order Placed": "order_created",
         "Order Accepted": "order_accepted",
@@ -497,17 +548,12 @@ def emit_order_event(order_id, event_name=None, extra_payload=None):
     if not payload:
         return
 
-    payload["event"] = event_name or status_to_socket_event(payload["status"])
+    payload["event"] = event_name or status_to_live_event(payload["status"])
     if extra_payload:
         payload.update(extra_payload)
 
+    # Polling clients will read fresh payloads from the /api/live endpoints.
     invalidate_cache("live:")
-
-    socketio.emit("order_event", payload, room="manager")
-    socketio.emit("order_event", payload, room=f"customer_{payload['user_id']}")
-
-    if payload.get("delivery_person"):
-        socketio.emit("order_event", payload, room=delivery_room_name(payload["delivery_person"]))
 
 
 def update_due_delivery_statuses():
@@ -703,49 +749,6 @@ def send_otp_sms(mobile_number, otp_code):
     # Mock provider keeps flow non-breaking in environments without SMS credentials.
     print(f"[OTP-MOCK] OTP for {mobile_number}: {otp_code}")
     return True, None
-
-
-@socketio.on("connect")
-def handle_socket_connect():
-    role = session.get("account_role")
-    join_room("global")
-
-    if role == "manager":
-        join_room("manager")
-    elif role == "customer" and session.get("user_id"):
-        join_room(f"customer_{session['user_id']}")
-    elif role == "delivery_partner" and session.get("staff_name"):
-        join_room(delivery_room_name(session["staff_name"]))
-
-
-@socketio.on("rider_location_update")
-def handle_rider_location_update(data):
-    order_id = data.get("order_id")
-    lat = data.get("lat")
-    lng = data.get("lng")
-    if not order_id or lat is None or lng is None:
-        return
-
-    order = query_db("SELECT id, user_id FROM orders WHERE id = ?", (order_id,), one=True)
-    if not order:
-        return
-
-    location_payload = {
-        "order_id": order["id"],
-        "lat": lat,
-        "lng": lng,
-        "event": "rider_location",
-    }
-    socketio.emit("rider_location", location_payload, room="manager")
-    socketio.emit("rider_location", location_payload, room=f"customer_{order['user_id']}")
-
-
-@socketio.on("near_customer")
-def handle_near_customer(data):
-    order_id = data.get("order_id")
-    if not order_id:
-        return
-    emit_order_event(order_id, "near_customer")
 
 
 def normalize_db_image_paths(db):
@@ -2634,16 +2637,22 @@ def delete_food(food_id):
 @app.route("/manager/order/status/<int:order_id>/<status>")
 @admin_required
 def update_order_status(order_id, status):
-    valid_statuses = ["Order Accepted", "Preparing Food", "Ready for Pickup", "Rejected", "Cancelled", "Delivered"]
-    if status not in valid_statuses:
-        flash("Invalid status.", "danger")
-        return redirect(url_for("admin_orders"))
     db = get_db()
+    order = db.execute("SELECT id, status FROM orders WHERE id = ?", (order_id,)).fetchone()
+    if not order:
+        flash("Order not found.", "warning")
+        return redirect(url_for("admin_orders"))
+
+    allowed_actions = manager_allowed_actions(order["status"])
+    if status not in allowed_actions:
+        flash(f"Invalid transition from '{order['status']}' to '{status}'.", "danger")
+        return redirect(url_for("admin_orders"))
+
     db.execute("UPDATE orders SET status = ? WHERE id = ?", (status, order_id))
     db.commit()
     log_order_timeline(order_id, status, "manager", session.get("staff_name"), "Updated by manager")
     create_order_notifications(order_id, status)
-    emit_order_event(order_id, status_to_socket_event(status))
+    emit_order_event(order_id, status_to_live_event(status))
     flash(f"Order status updated to {status}.", "success")
     return redirect(url_for("admin_orders"))
 
@@ -2657,7 +2666,17 @@ def delivery_dashboard():
         SELECT
             o.*,
             u.name AS customer_name,
-            u.email AS customer_email
+            u.email AS customer_email,
+            CASE
+                WHEN o.status IN ('Ready for Pickup', 'Rider Assigned', 'Picked Up', 'On the Way', 'Near Customer', 'Delivered')
+                    THEN o.address
+                ELSE 'Available after restaurant marks order Ready'
+            END AS visible_address,
+            CASE
+                WHEN o.status IN ('Ready for Pickup', 'Rider Assigned', 'Picked Up', 'On the Way', 'Near Customer', 'Delivered')
+                    THEN o.phone
+                ELSE 'Hidden until order is Ready'
+            END AS visible_phone
         FROM orders o
         LEFT JOIN users u ON u.id = o.user_id
         WHERE o.delivery_person = ?
@@ -2691,6 +2710,7 @@ def delivery_dashboard():
                     "id": row["id"],
                     "status": row["status"],
                     "delivery_accepted": row["delivery_accepted"] or 0,
+                    "allowed_actions": delivery_allowed_actions(row["status"]),
                 }
                 for row in assigned_orders
             ],
@@ -2707,7 +2727,7 @@ def delivery_dashboard():
 @app.route("/delivery/order/status/<int:order_id>/<status>")
 @delivery_required
 def delivery_update_order_status(order_id, status):
-    valid_statuses = ["Accept", "Reject", "Picked Up", "On the Way", "Delivered"]
+    valid_statuses = ["Accept", "Reject", "Picked Up", "On the Way", "Near Customer", "Delivered"]
     if status not in valid_statuses:
         flash("Invalid delivery status.", "danger")
         return redirect(url_for("delivery_dashboard"))
@@ -2719,6 +2739,11 @@ def delivery_update_order_status(order_id, status):
     ).fetchone()
     if not order:
         flash("Order not assigned to you.", "warning")
+        return redirect(url_for("delivery_dashboard"))
+
+    allowed = delivery_allowed_actions(order["status"])
+    if status not in allowed:
+        flash(f"Invalid transition from '{order['status']}' using '{status}'.", "danger")
         return redirect(url_for("delivery_dashboard"))
 
     event_name = None
@@ -2743,7 +2768,7 @@ def delivery_update_order_status(order_id, status):
         event_name = "rider_assigned"
     else:
         db.execute("UPDATE orders SET status = ? WHERE id = ?", (status, order_id))
-        event_name = status_to_socket_event(status)
+        event_name = status_to_live_event(status)
 
     db.commit()
     timeline_status = "Rider Assigned" if status == "Accept" else ("Ready for Pickup" if status == "Reject" else status)
@@ -2800,7 +2825,7 @@ def live_customer_dashboard():
     update_due_delivery_statuses()
     recent_orders = query_db(
         '''
-        SELECT id, status, delivery_person
+        SELECT id, status, delivery_person, total, created_at
         FROM orders
         WHERE user_id = ?
         ORDER BY created_at DESC
@@ -2832,13 +2857,35 @@ def live_customer_dashboard():
                     "id": row["id"],
                     "status": row["status"],
                     "delivery_person": row["delivery_person"] or "",
+                    "total": float(row["total"] or 0),
+                    "created_at": row["created_at"],
                 }
                 for row in recent_orders
             ],
         }
     )
     cache_set(cache_key, token, ttl_seconds=5)
-    return jsonify({"token": token})
+    return jsonify(
+        {
+            "token": token,
+            "kind": "customer_dashboard",
+            "summary": {
+                "total": order_summary["total_orders"] or 0,
+                "active": order_summary["active_orders"] or 0,
+                "delivered": order_summary["delivered_orders"] or 0,
+            },
+            "orders": [
+                {
+                    "id": row["id"],
+                    "status": row["status"],
+                    "delivery_person": row["delivery_person"] or "",
+                    "total": float(row["total"] or 0),
+                    "created_at": row["created_at"],
+                }
+                for row in recent_orders
+            ],
+        }
+    )
 
 
 @app.route("/api/live/manager/dashboard")
@@ -2902,7 +2949,27 @@ def live_manager_dashboard():
         }
     )
     cache_set(cache_key, token, ttl_seconds=5)
-    return jsonify({"token": token})
+    return jsonify(
+        {
+            "token": token,
+            "kind": "manager_dashboard",
+            "stats": {
+                "total": order_stats["total_orders"] or 0,
+                "active": order_stats["active_orders"] or 0,
+                "delivered": order_stats["delivered_orders"] or 0,
+            },
+            "panel": [
+                {
+                    "delivery_person": row["delivery_person"],
+                    "latest_status": row["latest_status"],
+                    "active_orders": row["active_orders"] or 0,
+                    "delivered_orders": row["delivered_orders"] or 0,
+                    "assigned_orders": row["assigned_orders"] or 0,
+                }
+                for row in delivery_panel
+            ],
+        }
+    )
 
 
 @app.route("/api/live/manager/orders")
@@ -2915,9 +2982,19 @@ def live_manager_orders():
     update_due_delivery_statuses()
     orders = query_db(
         '''
-        SELECT id, status, delivery_person
-        FROM orders
-        WHERE status NOT IN ('Delivered', 'Cancelled', 'Rejected')
+        SELECT
+            o.id,
+            o.status,
+            o.delivery_person,
+            o.total,
+            o.payment,
+            o.address,
+            o.phone,
+            COALESCE(NULLIF(o.customer_name, ''), u.name, 'Guest') AS customer_name,
+            u.email AS customer_email
+        FROM orders o
+        LEFT JOIN users u ON u.id = o.user_id
+        WHERE o.status NOT IN ('Delivered', 'Cancelled', 'Rejected')
         ORDER BY created_at DESC
         '''
     )
@@ -2927,12 +3004,33 @@ def live_manager_orders():
                 "id": row["id"],
                 "status": row["status"],
                 "delivery_person": row["delivery_person"] or "",
+                "allowed_actions": manager_allowed_actions(row["status"]),
             }
             for row in orders
         ]
     )
     cache_set(cache_key, token, ttl_seconds=5)
-    return jsonify({"token": token})
+    return jsonify(
+        {
+            "token": token,
+            "kind": "manager_orders",
+            "orders": [
+                {
+                    "id": row["id"],
+                    "status": row["status"],
+                    "delivery_person": row["delivery_person"] or "",
+                    "total": float(row["total"] or 0),
+                    "payment": row["payment"],
+                    "address": row["address"],
+                    "phone": row["phone"],
+                    "customer_name": row["customer_name"],
+                    "customer_email": row["customer_email"] or "",
+                    "allowed_actions": manager_allowed_actions(row["status"]),
+                }
+                for row in orders
+            ],
+        }
+    )
 
 
 @app.route("/api/live/delivery/dashboard")
@@ -2945,9 +3043,17 @@ def live_delivery_dashboard():
     update_due_delivery_statuses()
     assigned_orders = query_db(
         '''
-        SELECT id, status, delivery_accepted
-        FROM orders
-        WHERE delivery_person = ?
+        SELECT
+            o.id,
+            o.status,
+            o.delivery_accepted,
+            o.address,
+            o.phone,
+            u.name AS customer_name,
+            u.email AS customer_email
+        FROM orders o
+        LEFT JOIN users u ON u.id = o.user_id
+        WHERE o.delivery_person = ?
         ORDER BY created_at DESC
         ''',
         (session.get("staff_name"),),
@@ -2978,13 +3084,39 @@ def live_delivery_dashboard():
                     "id": row["id"],
                     "status": row["status"],
                     "delivery_accepted": row["delivery_accepted"] or 0,
+                    "allowed_actions": delivery_allowed_actions(row["status"]),
                 }
                 for row in assigned_orders
             ],
         }
     )
     cache_set(cache_key, token, ttl_seconds=5)
-    return jsonify({"token": token})
+    orders_payload = [
+        {
+            "id": row["id"],
+            "status": row["status"],
+            "delivery_accepted": row["delivery_accepted"] or 0,
+            "customer_name": row["customer_name"] or "Customer",
+            "customer_email": row["customer_email"] or "",
+            "address": row["address"] if customer_details_visible_for_delivery(row["status"]) else "Available after restaurant marks order Ready",
+            "phone": row["phone"] if customer_details_visible_for_delivery(row["status"]) else "Hidden until order is Ready",
+            "allowed_actions": delivery_allowed_actions(row["status"]),
+        }
+        for row in assigned_orders
+    ]
+    return jsonify(
+        {
+            "token": token,
+            "kind": "delivery_dashboard",
+            "stats": {
+                "total": delivery_stats["total_assigned"] or 0,
+                "accepted": delivery_stats["accepted_orders"] or 0,
+                "active": delivery_stats["active_orders"] or 0,
+                "delivered": delivery_stats["delivered_orders"] or 0,
+            },
+            "orders": orders_payload,
+        }
+    )
 
 
 @app.route("/api/live/order/<int:order_id>")
@@ -2997,7 +3129,7 @@ def live_order(order_id):
     update_due_delivery_statuses()
     order = query_db(
         '''
-        SELECT id, status, delivery_person, estimated_delivery_time, auto_delivered_at
+        SELECT id, status, delivery_person, phone, address, estimated_delivery_time, auto_delivered_at
         FROM orders
         WHERE id = ? AND user_id = ?
         ''',
@@ -3016,6 +3148,8 @@ def live_order(order_id):
         "id": order["id"],
         "status": order["status"],
         "delivery_person": order["delivery_person"],
+        "phone": order["phone"],
+        "address": order["address"],
         "estimated_delivery_time": order["estimated_delivery_time"],
         "auto_delivered_at": order["auto_delivered_at"],
         "rider_location": {

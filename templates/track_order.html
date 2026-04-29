@@ -1,94 +1,71 @@
 {% extends "base.html" %}
 {% block content %}
 <div class="js-track-live-watch" data-live-endpoint="{{ url_for('live_order', order_id=order.id) }}"></div>
-<div class="container mt-5">
+<div class="container mt-4 mt-lg-5">
     <div class="row justify-content-center">
-        <div class="col-lg-8">
-            <!-- Order Tracking Header -->
+        <div class="col-lg-10">
             <div class="card shadow-sm mb-4 fade-in">
                 <div class="card-body">
-                    <h2 class="card-title mb-3">📦 Order Tracking</h2>
-                    <div class="row">
+                    <div class="d-flex justify-content-between align-items-start flex-wrap gap-2 mb-3">
+                        <div>
+                            <h2 class="card-title mb-1">Live Order Tracking</h2>
+                            <p class="text-muted mb-0">Step-based tracking with live polling every few seconds.</p>
+                        </div>
+                        <span class="badge order-status-badge {{ 'bg-success' if order.status == 'Delivered' else 'bg-primary' }}" id="statusBadge" data-order-id="{{ order.id }}">{{ order.status }}</span>
+                    </div>
+
+                    <div class="row g-3">
                         <div class="col-md-6">
-                            <p><strong>Order ID:</strong> #{{ order.id }}</p>
-                            <p><strong>Payment Method:</strong> {{ order.payment }}</p>
-                            <p><strong>Total Amount:</strong> ₹{{ "%.2f" | format(order.total) }}</p>
+                            <div class="rounded-4 p-3 bg-light h-100">
+                                <p class="mb-2"><strong>Order ID:</strong> #{{ order.id }}</p>
+                                <p class="mb-2"><strong>Payment Method:</strong> {{ order.payment }}</p>
+                                <p class="mb-0"><strong>Total Amount:</strong> ₹{{ "%.2f" | format(order.total) }}</p>
+                            </div>
                         </div>
                         <div class="col-md-6">
-                            <p><strong>Delivery Address:</strong></p>
-                            <p><small>{{ order.address }}</small></p>
-                            <p><strong>Contact:</strong> {{ order.phone }}</p>
-                            <p><strong>Delivery Partner:</strong> <span id="trackDeliveryPartner">{{ order.delivery_person or 'Assigning...' }}</span></p>
+                            <div class="rounded-4 p-3 bg-light h-100">
+                                <p class="mb-2"><strong>Restaurant:</strong> FoodFlux Kitchen</p>
+                                <p class="mb-2"><strong>Delivery Partner:</strong> <span id="trackDeliveryPartner">{{ order.delivery_person or 'Assigning...' }}</span></p>
+                                <p class="mb-0"><strong>Contact:</strong> <span id="trackCustomerPhone">{{ order.phone if order.status in ['Ready for Pickup', 'Rider Assigned', 'Picked Up', 'On the Way', 'Near Customer', 'Delivered'] else 'Hidden until order is Ready' }}</span></p>
+                            </div>
                         </div>
                     </div>
                 </div>
             </div>
 
-            <!-- Order Status Progress -->
             <div class="card shadow-sm mb-4 fade-in">
                 <div class="card-body">
-                    <h5 class="card-title mb-4">Order Status</h5>
-                    <div class="d-flex justify-content-between align-items-center">
-                        <div class="text-center">
-                            <div class="status-circle active slide-in">✓</div>
-                            <small>Order Placed</small>
-                        </div>
-                        <div class="flex-grow-1 mx-2" style="border-top: 2px solid #28a745; margin-top: 30px;"></div>
-                        <div class="text-center">
-                            <div class="status-circle {% if order.status in ['Order Accepted', 'Preparing Food', 'Ready for Pickup', 'Rider Assigned', 'Picked Up', 'On the Way', 'Delivered'] %}active{% endif %} slide-in" style="animation-delay: 0.2s;">
-                                {% if order.status in ['Order Accepted', 'Preparing Food', 'Ready for Pickup', 'Rider Assigned', 'Picked Up', 'On the Way', 'Delivered'] %}✓{% endif %}
-                            </div>
-                            <small>Accepted</small>
-                        </div>
-                        <div class="flex-grow-1 mx-2" style="border-top: 2px solid {% if order.status in ['Preparing Food', 'Ready for Pickup', 'Rider Assigned', 'Picked Up', 'On the Way', 'Delivered'] %}#28a745{% else %}#ccc{% endif %}; margin-top: 30px;"></div>
-                        <div class="text-center">
-                            <div class="status-circle {% if order.status in ['Preparing Food', 'Ready for Pickup', 'Rider Assigned', 'Picked Up', 'On the Way', 'Delivered'] %}active{% endif %} slide-in" style="animation-delay: 0.4s;">
-                                {% if order.status in ['Preparing Food', 'Ready for Pickup', 'Rider Assigned', 'Picked Up', 'On the Way', 'Delivered'] %}✓{% endif %}
-                            </div>
-                            <small>Preparing</small>
-                        </div>
-                        <div class="flex-grow-1 mx-2" style="border-top: 2px solid {% if order.status in ['Rider Assigned', 'Picked Up', 'On the Way', 'Delivered'] %}#28a745{% else %}#ccc{% endif %}; margin-top: 30px;"></div>
-                        <div class="text-center">
-                            <div class="status-circle {% if order.status in ['Rider Assigned', 'Picked Up', 'On the Way', 'Delivered'] %}active{% endif %} slide-in" style="animation-delay: 0.6s;">
-                                {% if order.status in ['Rider Assigned', 'Picked Up', 'On the Way', 'Delivered'] %}✓{% endif %}
-                            </div>
-                            <small>On the Way</small>
-                        </div>
+                    <div class="d-flex justify-content-between align-items-center flex-wrap gap-2 mb-3">
+                        <h5 class="card-title mb-0">Order Progress</h5>
+                        <small class="text-muted">No timer. Live status only.</small>
                     </div>
-                    <div class="mt-4 text-center">
-                        <p class="mb-1"><strong>Current Status:</strong> <span class="badge bg-primary order-status-badge" id="statusBadge" data-order-id="{{ order.id }}" style="font-size: 1rem; padding: 0.5rem 1rem;">{{ order.status }}</span></p>
+                    <div class="live-tracker" id="liveTracker" data-current-status="{{ order.status }}">
+                        {% set tracker_steps = ['Order Placed', 'Order Accepted', 'Preparing Food', 'Ready for Pickup', 'Picked Up', 'On the Way', 'Near Customer', 'Delivered'] %}
+                        {% for step_name in tracker_steps %}
+                        <div class="live-tracker__step {% if tracker_steps.index(step_name) <= tracker_steps.index(order.status if order.status in tracker_steps else 'Order Placed') or (step_name == 'Ready for Pickup' and order.status == 'Rider Assigned') %}is-active{% endif %}" data-step="{{ step_name }}">
+                            <span class="live-tracker__dot">{% if tracker_steps.index(step_name) <= tracker_steps.index(order.status if order.status in tracker_steps else 'Order Placed') or (step_name == 'Ready for Pickup' and order.status == 'Rider Assigned') %}✓{% endif %}</span>
+                            <span class="live-tracker__label">{{ step_name.replace('Ready for Pickup', 'Ready').replace('Order Accepted', 'Accepted').replace('Preparing Food', 'Preparing').replace('Picked Up', 'Picked Up').replace('On the Way', 'On the Way').replace('Near Customer', 'Near').replace('Delivered', 'Delivered') }}</span>
+                        </div>
+                        {% endfor %}
                     </div>
                 </div>
             </div>
 
-            <!-- Delivery Timer -->
-            <div class="card shadow-sm mb-4 border-success fade-in" style="animation-delay: 0.3s;">
-                <div class="card-body text-center bg-light">
-                    <h5 class="card-title mb-3">⏱️ Estimated Delivery Time</h5>
-                    <div class="timer-display" id="timerDisplay" data-estimated-delivery="{{ order.estimated_delivery_time or '' }}">
-                        <span id="minutes">30</span>:<span id="seconds">00</span>
-                    </div>
-                    <p class="mt-3 mb-0" id="estimatedTime"></p>
-                </div>
-            </div>
-
-            <!-- Order Items -->
-            <div class="card shadow-sm mb-4 fade-in" style="animation-delay: 0.6s;">
+            <div class="card shadow-sm mb-4 fade-in">
                 <div class="card-body">
-                    <h5 class="card-title mb-3">📋 Order Items</h5>
+                    <h5 class="card-title mb-3">Order Items</h5>
                     <ul class="list-group list-group-flush">
                         {% for item in order_items %}
                         <li class="list-group-item slide-up">
                             <div class="d-flex justify-content-between align-items-center">
                                 <div>
-                                <strong>{{ item.name }}</strong><br>
-                                <small>Qty: {{ item.qty }} × ₹{{ "%.2f" | format(item.price) }}</small>
+                                    <strong>{{ item.name }}</strong><br>
+                                    <small>Qty: {{ item.qty }} × ₹{{ "%.2f" | format(item.price) }}</small>
                                 </div>
                                 <span class="fw-bold">₹{{ "%.2f" | format(item.price * item.qty) }}</span>
                             </div>
 
-                            {% if order.status == 'Delivered' %}
-                            <form method="post" action="{{ url_for('rate_item', order_id=order.id, food_id=item.food_id) }}" class="mt-3 border rounded p-3 bg-light">
+                            <form method="post" action="{{ url_for('rate_item', order_id=order.id, food_id=item.food_id) }}" class="mt-3 border rounded p-3 bg-light {% if order.status != 'Delivered' %}d-none{% endif %} js-item-rating-form">
                                 <label class="form-label fw-semibold mb-2">Rate this item</label>
                                 <div class="d-flex flex-wrap gap-2 align-items-center">
                                     <select name="rating" class="form-select form-select-sm" style="max-width: 140px;" required>
@@ -97,19 +74,10 @@
                                         <option value="{{ score }}" {% if item.user_rating == score %}selected{% endif %}>{{ score }} Star{% if score > 1 %}s{% endif %}</option>
                                         {% endfor %}
                                     </select>
-                                    <input
-                                        type="text"
-                                        name="review"
-                                        class="form-control form-control-sm"
-                                        placeholder="Optional review"
-                                        value="{{ item.user_review or '' }}"
-                                        maxlength="250"
-                                        style="max-width: 320px;"
-                                    />
+                                    <input type="text" name="review" class="form-control form-control-sm" placeholder="Optional review" value="{{ item.user_review or '' }}" maxlength="250" style="max-width: 320px;" />
                                     <button type="submit" class="btn btn-sm btn-primary">Save Rating</button>
                                 </div>
                             </form>
-                            {% endif %}
                         </li>
                         {% endfor %}
                     </ul>
@@ -121,8 +89,7 @@
                 </div>
             </div>
 
-            {% if order.status == 'Delivered' %}
-            <div class="card shadow-sm mb-4 fade-in" style="animation-delay: 0.65s;">
+            <div class="card shadow-sm mb-4 fade-in {% if order.status != 'Delivered' %}d-none{% endif %}" id="serviceRatingCard">
                 <div class="card-body">
                     <h5 class="card-title mb-3">Rate Restaurant and Delivery</h5>
                     <form method="post" action="{{ url_for('rate_service', order_id=order.id) }}" class="row g-3">
@@ -152,9 +119,8 @@
                     </form>
                 </div>
             </div>
-            {% endif %}
 
-            <div class="card shadow-sm mb-4 fade-in" style="animation-delay: 0.67s;">
+            <div class="card shadow-sm mb-4 fade-in">
                 <div class="card-body">
                     <h5 class="card-title mb-3">Order Timeline</h5>
                     {% if timeline_entries %}
@@ -178,8 +144,7 @@
                 </div>
             </div>
 
-            <!-- Action Buttons -->
-            <div class="card shadow-sm mb-4 fade-in" style="animation-delay: 0.7s;">
+            <div class="card shadow-sm mb-4 fade-in">
                 <div class="card-body">
                     <h5 class="card-title mb-3">Live Rider Location</h5>
                     <div id="riderMap" style="height: 280px; border-radius: 12px; overflow: hidden;"></div>
@@ -187,139 +152,72 @@
                 </div>
             </div>
 
-            <!-- Action Buttons -->
             <div class="d-flex gap-2 mb-4">
-                <a href="{{ url_for('home') }}" class="btn btn-secondary flex-grow-1" style="transition: all 0.3s;">Continue Shopping</a>
-                <a href="{{ url_for('menu') }}" class="btn btn-outline-primary flex-grow-1" style="transition: all 0.3s;">View Menu</a>
+                <a href="{{ url_for('home') }}" class="btn btn-secondary flex-grow-1">Continue Shopping</a>
+                <a href="{{ url_for('menu') }}" class="btn btn-outline-primary flex-grow-1">View Menu</a>
             </div>
         </div>
     </div>
 </div>
 
 <style>
-    .status-circle {
-        width: 50px;
-        height: 50px;
-        border-radius: 50%;
-        background-color: #f0f0f0;
-        border: 2px solid #ccc;
+    .live-tracker {
+        display: grid;
+        grid-template-columns: repeat(4, minmax(0, 1fr));
+        gap: 0.75rem;
+    }
+
+    .live-tracker__step {
+        position: relative;
+        padding: 0.85rem 0.75rem;
+        border-radius: 16px;
+        background: #f8fafc;
+        border: 1px solid #e2e8f0;
+        min-height: 92px;
         display: flex;
+        flex-direction: column;
+        justify-content: center;
+        align-items: center;
+        text-align: center;
+    }
+
+    .live-tracker__step.is-active {
+        background: linear-gradient(135deg, #0f172a 0%, #1d4ed8 100%);
+        color: #fff;
+        border-color: transparent;
+    }
+
+    .live-tracker__dot {
+        width: 32px;
+        height: 32px;
+        border-radius: 50%;
+        display: inline-flex;
         align-items: center;
         justify-content: center;
-        margin: 0 auto 10px;
-        font-weight: bold;
-        color: #ccc;
-        font-size: 1.5rem;
+        background: rgba(148, 163, 184, 0.2);
+        margin-bottom: 0.45rem;
+        font-weight: 700;
     }
-    
-    .status-circle.active {
-        background-color: #28a745;
-        border-color: #28a745;
-        color: white;
+
+    .live-tracker__step.is-active .live-tracker__dot {
+        background: rgba(255, 255, 255, 0.22);
     }
-    
-    .timer-display {
-        font-size: 3.5rem;
-        font-weight: bold;
-        color: #28a745;
-        letter-spacing: 2px;
-        font-family: 'Courier New', monospace;
-        animation: pulse 1.5s infinite;
+
+    .live-tracker__label {
+        font-size: 0.9rem;
+        font-weight: 600;
+    }
+
+    @media (max-width: 991px) {
+        .live-tracker {
+            grid-template-columns: repeat(2, minmax(0, 1fr));
+        }
+    }
+
+    @media (max-width: 575px) {
+        .live-tracker {
+            grid-template-columns: 1fr;
+        }
     }
 </style>
-
-<script>
-    let riderMap;
-    let riderMarker;
-
-    function initRiderMap() {
-        if (typeof L === 'undefined') {
-            return;
-        }
-        riderMap = L.map('riderMap').setView([16.3067, 80.4365], 13);
-        L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-            maxZoom: 19,
-            attribution: '&copy; OpenStreetMap contributors'
-        }).addTo(riderMap);
-    }
-
-    window.updateRiderMapMarker = function(lat, lng) {
-        if (!riderMap) {
-            return;
-        }
-        if (!riderMarker) {
-            riderMarker = L.marker([lat, lng]).addTo(riderMap).bindPopup('Rider Location');
-        } else {
-            riderMarker.setLatLng([lat, lng]);
-        }
-        riderMap.setView([lat, lng], 14);
-    };
-
-    function parseDateTime(dateString) {
-        if (!dateString) {
-            return null;
-        }
-        const normalized = String(dateString).trim().replace(' ', 'T');
-        const parsed = new Date(normalized);
-        return Number.isNaN(parsed.getTime()) ? null : parsed;
-    }
-    
-    const rawEstimatedDelivery = '{{ order.estimated_delivery_time or "" }}';
-    const estimatedDeliveryTime = rawEstimatedDelivery ? parseDateTime(rawEstimatedDelivery) : null;
-    
-    let timerInterval;
-    
-    function updateTimer() {
-        const now = new Date();
-        if (!estimatedDeliveryTime || Number.isNaN(estimatedDeliveryTime.getTime())) {
-            document.getElementById('timerDisplay').innerHTML = '<span id="minutes">--</span>:<span id="seconds">--</span>';
-            document.getElementById('estimatedTime').textContent = 'Timer starts when rider accepts your order.';
-            return;
-        }
-        const diff = estimatedDeliveryTime - now;
-        
-        if (diff <= 0) {
-            document.getElementById('timerDisplay').innerHTML = '<span id="minutes">00</span>:<span id="seconds">00</span>';
-            document.getElementById('estimatedTime').textContent = 'Your order should be arriving soon!';
-            document.getElementById('statusBadge').textContent = '{{ order.status }}';
-            if ('{{ order.status }}' === 'Delivered') {
-                showDeliveryNotification();
-            }
-            if (timerInterval) {
-                clearInterval(timerInterval);
-            }
-            return;
-        }
-        
-        const minutes = Math.floor(diff / 60000);
-        const seconds = Math.floor((diff % 60000) / 1000);
-        
-        document.getElementById('minutes').textContent = String(minutes).padStart(2, '0');
-        document.getElementById('seconds').textContent = String(seconds).padStart(2, '0');
-        
-        const deliveryTime = estimatedDeliveryTime.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: true });
-        document.getElementById('estimatedTime').textContent = 'Expected delivery by ' + deliveryTime;
-    }
-    
-    function showDeliveryNotification() {
-        // Check if status is delivered and show notification
-        if ('{{ order.status }}' === 'Delivered') {
-            const notificationHTML = `
-                <div class="alert alert-success alert-dismissible fade show bounce-in" role="alert" style="position: fixed; top: 20px; right: 20px; width: 400px; z-index: 10000; box-shadow: 0 4px 6px rgba(0,0,0,0.2);">
-                    <strong>🎉 Order Delivered!</strong>
-                    <p>Your order has been delivered. Enjoy your delicious food! 😋</p>
-                    <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
-                </div>
-            `;
-            document.body.insertAdjacentHTML('beforeend', notificationHTML);
-        }
-    }
-    
-    // Update timer immediately
-    updateTimer();
-    timerInterval = setInterval(updateTimer, 1000);
-    
-    // Polling-driven status updates are handled in static/js/main.js
-    initRiderMap();
-</script>
 {% endblock %}
