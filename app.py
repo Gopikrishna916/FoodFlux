@@ -55,7 +55,7 @@ if not ADMIN_MOBILE or not ADMIN_PASSWORD:
 MANAGER_MOBILE = os.environ.get("MANAGER_MOBILE", "9000000001")
 
 MANAGER_EMAIL = os.environ.get("MANAGER_EMAIL", "manager@foodflux.local")
-MANAGER_PASSWORD = os.environ.get("MANAGER_PASSWORD", ADMIN_PASSWORD)
+MANAGER_PASSWORD = os.environ.get("MANAGER_PASSWORD") or (ADMIN_PASSWORD if ADMIN_PASSWORD else "manager@123")
 
 DELIVERY_STAFF = [
     ("Rahul Sharma", "rahul@ckfood.com", "delivery123", "9000000002"),
@@ -393,40 +393,50 @@ def ensure_performance_indexes(db):
 
 
 def seed_staff_users(db):
-    manager_password_hash = generate_password_hash(MANAGER_PASSWORD)
-    admin_password_hash = generate_password_hash(ADMIN_PASSWORD)
-    
-    # Normalize mobile numbers
-    admin_mobile = normalize_mobile(ADMIN_MOBILE) or ADMIN_MOBILE
-    manager_mobile = normalize_mobile(MANAGER_MOBILE) or MANAGER_MOBILE
-    
-    existing_staff_rows = db.execute("SELECT email, mobile_number FROM staff_users").fetchall()
-    existing_emails = {row["email"].lower() for row in existing_staff_rows}
-    existing_mobiles = {normalize_mobile(row["mobile_number"]) for row in existing_staff_rows if row["mobile_number"]}
-    existing_mobiles.discard(None)
+    # Only create admin if credentials are provided
+    if not ADMIN_MOBILE or not ADMIN_PASSWORD:
+        # Skip admin creation if environment variables not set
+        pass
+    else:
+        admin_password_hash = generate_password_hash(ADMIN_PASSWORD)
+        admin_mobile = normalize_mobile(ADMIN_MOBILE) or ADMIN_MOBILE
+        
+        existing_staff_rows = db.execute("SELECT email, mobile_number FROM staff_users").fetchall()
+        existing_mobiles = {normalize_mobile(row["mobile_number"]) for row in existing_staff_rows if row["mobile_number"]}
+        existing_mobiles.discard(None)
 
-    # Create admin account with mobile number if not exists
-    if admin_mobile not in existing_mobiles:
-        admin_email = f"staff_{admin_mobile}@foodflux.local"
-        db.execute(
-            "INSERT INTO staff_users (name, email, mobile_number, mobile_verified, password, role) VALUES (?, ?, ?, 1, ?, ?)",
-            ("FoodFlux Admin", admin_email, admin_mobile, admin_password_hash, "admin"),
-        )
-        existing_mobiles.add(admin_mobile)
+        # Create admin account with mobile number if not exists
+        if admin_mobile not in existing_mobiles:
+            admin_email = f"staff_{admin_mobile}@foodflux.local"
+            db.execute(
+                "INSERT INTO staff_users (name, email, mobile_number, mobile_verified, password, role) VALUES (?, ?, ?, 1, ?, ?)",
+                ("FoodFlux Admin", admin_email, admin_mobile, admin_password_hash, "admin"),
+            )
+            existing_mobiles.add(admin_mobile)
+    
+    # Create manager account
+    if MANAGER_PASSWORD:
+        manager_password_hash = generate_password_hash(MANAGER_PASSWORD)
+        manager_mobile = normalize_mobile(MANAGER_MOBILE) or MANAGER_MOBILE
+        
+        existing_staff_rows = db.execute("SELECT email, mobile_number FROM staff_users").fetchall()
+        existing_emails = {row["email"].lower() for row in existing_staff_rows}
+        existing_mobiles = {normalize_mobile(row["mobile_number"]) for row in existing_staff_rows if row["mobile_number"]}
+        existing_mobiles.discard(None)
 
-    if MANAGER_EMAIL.lower() not in existing_emails:
-        db.execute(
-            "INSERT INTO staff_users (name, email, mobile_number, mobile_verified, password, role) VALUES (?, ?, ?, 1, ?, ?)",
-            ("Hotel Manager", MANAGER_EMAIL, manager_mobile, manager_password_hash, "manager"),
-        )
-        existing_emails.add(MANAGER_EMAIL.lower())
-        existing_mobiles.add(manager_mobile)
-    elif manager_mobile not in existing_mobiles:
-        db.execute(
-            "UPDATE staff_users SET mobile_number = ?, mobile_verified = 1 WHERE LOWER(email) = ? AND (mobile_number IS NULL OR TRIM(mobile_number) = '')",
-            (manager_mobile, MANAGER_EMAIL.lower()),
-        )
-        existing_mobiles.add(manager_mobile)
+        if MANAGER_EMAIL.lower() not in existing_emails:
+            db.execute(
+                "INSERT INTO staff_users (name, email, mobile_number, mobile_verified, password, role) VALUES (?, ?, ?, 1, ?, ?)",
+                ("Hotel Manager", MANAGER_EMAIL, manager_mobile, manager_password_hash, "manager"),
+            )
+            existing_emails.add(MANAGER_EMAIL.lower())
+            existing_mobiles.add(manager_mobile)
+        elif manager_mobile not in existing_mobiles:
+            db.execute(
+                "UPDATE staff_users SET mobile_number = ?, mobile_verified = 1 WHERE LOWER(email) = ? AND (mobile_number IS NULL OR TRIM(mobile_number) = '')",
+                (manager_mobile, MANAGER_EMAIL.lower()),
+            )
+            existing_mobiles.add(manager_mobile)
 
     for name, email, password, mobile_number in DELIVERY_STAFF:
         if email.lower() not in existing_emails:
