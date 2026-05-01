@@ -569,6 +569,113 @@ document.addEventListener("DOMContentLoaded", function () {
         });
     }
 
+    function getNormalizedPath(path) {
+        return path.replace(/\/\/+$/g, "") || "/";
+    }
+
+    function highlightMobileNav() {
+        const links = document.querySelectorAll(".mobile-bottom-nav__link");
+        const currentPath = getNormalizedPath(window.location.pathname);
+
+        links.forEach((link) => {
+            const targetPath = getNormalizedPath(new URL(link.href, window.location.origin).pathname);
+            const isActive = currentPath === targetPath || (targetPath !== "/" && currentPath.startsWith(targetPath));
+            link.classList.toggle("active", isActive);
+        });
+    }
+
+    function initMobileBottomNav() {
+        const role = document.body.dataset.role || "guest";
+        const ordersLink = document.getElementById("mobileNavOrdersLink");
+        const profileLink = document.getElementById("mobileNavProfileLink");
+
+        if (ordersLink) {
+            if (role === "customer") {
+                ordersLink.href = "/customer/dashboard";
+            } else if (role === "admin") {
+                ordersLink.href = "/admin/orders";
+            } else if (role === "manager") {
+                ordersLink.href = "/manager/orders";
+            } else if (role === "delivery_partner") {
+                ordersLink.href = "/delivery/dashboard";
+            } else {
+                ordersLink.href = "/login";
+            }
+        }
+
+        if (profileLink) {
+            if (role === "customer") {
+                profileLink.href = "/customer/dashboard";
+            } else if (role === "admin") {
+                profileLink.href = "/admin/dashboard";
+            } else if (role === "manager") {
+                profileLink.href = "/manager/dashboard";
+            } else if (role === "delivery_partner") {
+                profileLink.href = "/delivery/dashboard";
+            } else {
+                profileLink.href = "/login";
+            }
+        }
+
+        highlightMobileNav();
+    }
+
+    function shouldAnimateInternalLink(anchor) {
+        if (!anchor || anchor.target || anchor.hasAttribute("download") || anchor.hasAttribute("data-bs-toggle") || anchor.href.startsWith("mailto:") || anchor.href.startsWith("tel:")) {
+            return false;
+        }
+        const targetUrl = new URL(anchor.href, window.location.origin);
+        if (targetUrl.origin !== window.location.origin) {
+            return false;
+        }
+        return targetUrl.pathname !== window.location.pathname && !targetUrl.pathname.startsWith("/api/");
+    }
+
+    function initPageTransitions() {
+        document.addEventListener("click", function (event) {
+            const anchor = event.target.closest("a[href]");
+            if (!shouldAnimateInternalLink(anchor)) {
+                return;
+            }
+            document.documentElement.classList.add("page-exit");
+        });
+
+        const clearPageExit = function () {
+            document.documentElement.classList.remove("page-exit");
+            document.body.classList.remove("page-exit");
+        };
+
+        window.addEventListener("pageshow", clearPageExit);
+        window.addEventListener("popstate", clearPageExit);
+    }
+
+    function initSwipeNavigation() {
+        let startX = 0;
+        let startY = 0;
+
+        document.addEventListener("touchstart", function (event) {
+            if (!event.touches || !event.touches.length) {
+                return;
+            }
+            startX = event.touches[0].clientX;
+            startY = event.touches[0].clientY;
+        });
+
+        document.addEventListener("touchend", function (event) {
+            if (!event.changedTouches || !event.changedTouches.length) {
+                return;
+            }
+            const endX = event.changedTouches[0].clientX;
+            const endY = event.changedTouches[0].clientY;
+            const deltaX = endX - startX;
+            const deltaY = endY - startY;
+
+            if (Math.abs(deltaX) > 80 && Math.abs(deltaY) < 50 && deltaX > 0) {
+                window.history.back();
+            }
+        });
+    }
+
     function initRoutePrefetch() {
         const role = document.body.getAttribute("data-role") || "guest";
         if (role !== "guest" || typeof fetch !== "function") {
@@ -1250,6 +1357,9 @@ document.addEventListener("DOMContentLoaded", function () {
     initQtySteppers();
     initMobileAuthForms();
     initEnhancedLoginForms();
+    initMobileBottomNav();
+    initPageTransitions();
+    initSwipeNavigation();
     initRoutePrefetch();
     fetchCartState();
     initDashboardPolling();
