@@ -17,6 +17,12 @@
     <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}" />
 </head>
 <body data-role="{{ session.get('account_role', 'guest') }}" data-user-id="{{ session.get('user_id', '') }}" data-staff-name="{{ session.get('staff_name', '') }}" data-cart-state-endpoint="{{ url_for('cart_state') }}">
+    <div id="pageLoader" class="page-loader" aria-hidden="true">
+        <div class="page-loader__body">
+            <div class="spinner-border text-primary" role="status" aria-hidden="true"></div>
+            <p class="page-loader__text">Loading FoodFlux...</p>
+        </div>
+    </div>
     <nav class="navbar navbar-expand-xl sticky-top">
         <div class="container nav-shell">
             <a class="navbar-brand brand-logo d-flex align-items-center gap-2" href="{{ url_for('home') }}">
@@ -54,8 +60,8 @@
                         </a>
                     </li>
 
-                    {% if session.account_role == 'customer' %}
-                    <li class="nav-item"><a class="nav-link" href="{{ url_for('customer_dashboard') }}">Dashboard</a></li>
+                    {% if session.account_role in ('customer', 'user') %}
+                    <li class="nav-item"><a class="nav-link" href="{{ url_for('user_dashboard') }}">Dashboard</a></li>
                     <li class="nav-item"><a class="nav-link" href="{{ url_for('notifications_center') }}">Notifications{% if unread_notification_count %} ({{ unread_notification_count }}){% endif %}</a></li>
                     <li class="nav-item"><span class="nav-link disabled">Hi, {{ session.user_name }}</span></li>
                     <li class="nav-item"><a class="btn btn-sm btn-outline-danger nav-cta" href="{{ url_for('logout') }}">Logout</a></li>
@@ -149,7 +155,7 @@
                             <li><a href="{{ url_for('menu') }}" class="footer-link">Menu</a></li>
                             <li><a href="{{ url_for('cart') }}" class="footer-link">Cart</a></li>
                             <li><a href="{{ url_for('register') }}" class="footer-link">Create Account</a></li>
-                            <li><a href="{{ url_for('login') }}" class="footer-link">Customer Login</a></li>
+                            <li><a href="{{ url_for('login') }}" class="footer-link">User Login</a></li>
                         </ul>
                     </div>
 
@@ -183,6 +189,7 @@
         </div>
     </footer>
 
+    <div id="toastContainer" class="toast-container" aria-live="polite" aria-atomic="true"></div>
     <div class="floating-cart-bar d-none" id="floatingCartBar" aria-live="polite">
         <div class="floating-cart-bar__content">
             <div>

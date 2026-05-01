@@ -24,6 +24,7 @@ body[data-theme="dark"] {
 
 html,
 body {
+    scroll-behavior: smooth;
     background: radial-gradient(circle at top left, rgba(255, 107, 53, 0.12), transparent 40%), var(--ff-bg);
     color: var(--ff-text);
     font-family: Inter, "Segoe UI", sans-serif;
@@ -187,6 +188,10 @@ body[data-theme="dark"] .auth-card {
     background: linear-gradient(160deg, rgba(21, 29, 43, 0.95), rgba(15, 21, 33, 0.92));
 }
 
+body {
+    overscroll-behavior-y: contain;
+}
+
 .auth-header {
     display: flex;
     align-items: center;
@@ -325,6 +330,122 @@ body.page-exit {
 
 .mobile-bottom-nav__link .bi {
     font-size: 1.25rem;
+}
+
+button,
+.btn,
+.mobile-bottom-nav__link,
+.category-pill,
+.food-card {
+    touch-action: manipulation;
+    -webkit-tap-highlight-color: transparent;
+}
+
+.btn,
+.mobile-bottom-nav__link {
+    min-height: 44px;
+}
+
+.btn:active,
+.mobile-bottom-nav__link:active,
+.category-pill:active,
+.food-card:active {
+    transform: scale(0.98);
+}
+
+.page-loader {
+    position: fixed;
+    inset: 0;
+    background: rgba(255, 255, 255, 0.94);
+    backdrop-filter: blur(10px);
+    z-index: 1200;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: opacity 0.35s ease, visibility 0.35s ease;
+}
+
+.page-loader--hidden {
+    opacity: 0;
+    visibility: hidden;
+    pointer-events: none;
+}
+
+.page-loader__body {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 0.75rem;
+    padding: 1.2rem 1.4rem;
+    border-radius: 22px;
+    background: rgba(255, 255, 255, 0.96);
+    box-shadow: var(--ff-shadow-soft);
+}
+
+.page-loader__text {
+    margin: 0;
+    font-size: 0.95rem;
+    font-weight: 700;
+    color: var(--ff-text);
+}
+
+.toast-container {
+    position: fixed;
+    top: 14px;
+    right: 14px;
+    z-index: 1205;
+    display: flex;
+    flex-direction: column;
+    gap: 0.75rem;
+    pointer-events: none;
+    width: min(340px, calc(100% - 28px));
+}
+
+.toast-notification {
+    border-radius: 18px;
+    box-shadow: var(--ff-shadow-soft);
+    padding: 0.95rem 1rem;
+    opacity: 0;
+    transform: translateY(-12px);
+    transition: transform 0.25s ease, opacity 0.25s ease;
+    pointer-events: auto;
+}
+
+.toast-notification.toast-visible {
+    opacity: 1;
+    transform: translateY(0);
+}
+
+.toast-notification strong {
+    display: block;
+    margin-bottom: 0.25rem;
+}
+
+.skeleton {
+    background: linear-gradient(90deg, #f3f4f6 0%, #e5e7eb 40%, #f3f4f6 100%);
+    background-size: 200% 100%;
+    animation: skeletonPulse 1.4s ease-in-out infinite;
+    border-radius: 16px;
+}
+
+.skeleton-card {
+    height: 220px;
+    width: 100%;
+}
+
+.skeleton-line {
+    height: 14px;
+    width: 100%;
+    margin-bottom: 0.75rem;
+}
+
+@keyframes skeletonPulse {
+    0% {
+        background-position: 200% 0;
+    }
+    100% {
+        background-position: -200% 0;
+    }
 }
 
 .floating-cart-bar {
@@ -787,6 +908,14 @@ textarea.form-control {
 
 .btn:hover {
     transform: translateY(-2px);
+}
+
+.pressed,
+.btn:active,
+.mobile-bottom-nav__link:active,
+.category-pill:active,
+.food-card:active {
+    transform: scale(0.98) !important;
 }
 
 .btn-primary {

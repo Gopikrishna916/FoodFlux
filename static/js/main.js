@@ -590,8 +590,8 @@ document.addEventListener("DOMContentLoaded", function () {
         const profileLink = document.getElementById("mobileNavProfileLink");
 
         if (ordersLink) {
-            if (role === "customer") {
-                ordersLink.href = "/customer/dashboard";
+            if (role === "customer" || role === "user") {
+                ordersLink.href = "/user/dashboard";
             } else if (role === "admin") {
                 ordersLink.href = "/admin/orders";
             } else if (role === "manager") {
@@ -604,8 +604,8 @@ document.addEventListener("DOMContentLoaded", function () {
         }
 
         if (profileLink) {
-            if (role === "customer") {
-                profileLink.href = "/customer/dashboard";
+            if (role === "customer" || role === "user") {
+                profileLink.href = "/user/dashboard";
             } else if (role === "admin") {
                 profileLink.href = "/admin/dashboard";
             } else if (role === "manager") {
@@ -743,18 +743,111 @@ document.addEventListener("DOMContentLoaded", function () {
         return { text: "Preparing", klass: "badge bg-secondary delivery-panel-badge" };
     }
 
+    function initToastContainer() {
+        if (document.getElementById("toastContainer")) {
+            return;
+        }
+        const container = document.createElement("div");
+        container.id = "toastContainer";
+        container.className = "toast-container";
+        container.setAttribute("aria-live", "polite");
+        container.setAttribute("aria-atomic", "true");
+        document.body.appendChild(container);
+    }
+
     function showLiveToast(title, message, styleClass = "alert-info") {
+        initToastContainer();
+        const container = document.getElementById("toastContainer");
+        if (!container) {
+            return;
+        }
         const toast = document.createElement("div");
-        toast.className = `alert ${styleClass}`;
-        toast.style.position = "fixed";
-        toast.style.top = "16px";
-        toast.style.right = "16px";
-        toast.style.width = "min(440px, calc(100% - 32px))";
-        toast.style.zIndex = "10000";
-        toast.style.boxShadow = "0 16px 30px rgba(15, 23, 42, 0.18)";
+        toast.className = `toast-notification alert ${styleClass}`;
+        toast.role = "status";
         toast.innerHTML = `<strong>${title}</strong><div>${message}</div>`;
-        document.body.appendChild(toast);
-        setTimeout(() => toast.remove(), 4500);
+        container.appendChild(toast);
+        window.requestAnimationFrame(() => toast.classList.add("toast-visible"));
+        window.setTimeout(() => {
+            toast.classList.remove("toast-visible");
+            window.setTimeout(() => toast.remove(), 250);
+        }, 4200);
+    }
+
+    function initPageLoader() {
+        const loader = document.getElementById("pageLoader");
+        if (!loader) {
+            return;
+        }
+        window.requestAnimationFrame(() => {
+            loader.classList.add("page-loader--hidden");
+        });
+    }
+
+    function initPressFeedback() {
+        let activeElement = null;
+        document.addEventListener("pointerdown", function (event) {
+            const target = event.target.closest(".btn, .mobile-bottom-nav__link, .category-pill, .food-card");
+            if (!target) {
+                return;
+            }
+            activeElement = target;
+            target.classList.add("pressed");
+        });
+        document.addEventListener("pointerup", function () {
+            if (activeElement) {
+                activeElement.classList.remove("pressed");
+                activeElement = null;
+            }
+        });
+        document.addEventListener("pointercancel", function () {
+            if (activeElement) {
+                activeElement.classList.remove("pressed");
+                activeElement = null;
+            }
+        });
+    }
+
+    function initSmoothScroll() {
+        document.documentElement.style.scrollBehavior = "smooth";
+    }
+
+    function initSwipeToCloseCartDrawer() {
+        const offcanvasElement = document.getElementById("cartDrawer");
+        if (!offcanvasElement) {
+            return;
+        }
+        let touchStartY = 0;
+        let touchCurrentY = 0;
+        let isSwiping = false;
+
+        offcanvasElement.addEventListener("touchstart", function (event) {
+            if (!event.touches || event.touches.length !== 1) {
+                return;
+            }
+            touchStartY = event.touches[0].clientY;
+            isSwiping = true;
+        });
+        offcanvasElement.addEventListener("touchmove", function (event) {
+            if (!isSwiping || !event.touches || event.touches.length !== 1) {
+                return;
+            }
+            touchCurrentY = event.touches[0].clientY;
+        });
+        offcanvasElement.addEventListener("touchend", function () {
+            if (!isSwiping) {
+                return;
+            }
+            const distance = touchCurrentY - touchStartY;
+            if (distance > 90) {
+                const bsOffcanvas = bootstrap.Offcanvas.getOrCreateInstance(offcanvasElement);
+                if (bsOffcanvas) {
+                    bsOffcanvas.hide();
+                }
+            }
+            isSwiping = false;
+            touchStartY = 0;
+            touchCurrentY = 0;
+        });
     }
 
     function updateRowByOrderId(tableId, payload, options = {}) {
@@ -1350,6 +1443,9 @@ document.addEventListener("DOMContentLoaded", function () {
         themeToggle.addEventListener("click", toggleTheme);
     }
 
+    initToastContainer();
+    initPageLoader();
+    initSmoothScroll();
     initTheme();
     initScrollReveal();
     initWishlistButtons();
@@ -1360,6 +1456,8 @@ document.addEventListener("DOMContentLoaded", function () {
     initMobileBottomNav();
     initPageTransitions();
     initSwipeNavigation();
+    initSwipeToCloseCartDrawer();
+    initPressFeedback();
     initRoutePrefetch();
     fetchCartState();
     initDashboardPolling();

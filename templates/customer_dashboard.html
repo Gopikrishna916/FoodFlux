@@ -1,9 +1,9 @@
 {% extends "base.html" %}
 {% block content %}
-<div class="js-live-watch" data-live-endpoint="{{ url_for('live_customer_dashboard') }}" data-live-token='{{ realtime_token|e }}'></div>
+<div class="js-live-watch" data-live-endpoint="{{ url_for('live_user_dashboard') }}" data-live-token='{{ realtime_token|e }}'></div>
 <div class="d-flex justify-content-between align-items-center mb-4 flex-wrap gap-2">
     <div>
-        <h2>Customer Dashboard</h2>
+        <h2>User Dashboard</h2>
         <p class="text-muted mb-0">Your orders, status, and quick actions in one place.</p>
     </div>
     <a href="{{ url_for('menu') }}" class="btn btn-primary">Order Again</a>

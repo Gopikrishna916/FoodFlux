@@ -857,15 +857,12 @@ def close_connection(exception):
         db.close()
 
 
-def login_required(func):
-    def wrapper(*args, **kwargs):
-        if session.get("account_role") != "customer" or not session.get("user_id"):
-            flash("Please log in to continue.", "warning")
-            return redirect(url_for("login", next=request.full_path if request.query_string else request.path))
-        return func(*args, **kwargs)
+def user_required(func):
+    return role_required("customer")(func)
 
-    wrapper.__name__ = func.__name__
-    return wrapper
+
+def login_required(func):
+    return user_required(func)
 
 
 def role_required(*allowed_roles):
@@ -899,7 +896,7 @@ def delivery_required(func):
 
 
 def customer_required(func):
-    return role_required("customer")(func)
+    return user_required(func)
 
 
 def calculate_discount(total):
@@ -1510,7 +1507,7 @@ def mobile_login():
     session["user_name"] = user["name"]
     session["user_email"] = user["email"]
     session["account_role"] = "customer"
-    return jsonify({"ok": True, "message": "Login successful.", "redirect": safe_next_url(next_url, "customer_dashboard")})
+    return jsonify({"ok": True, "message": "Login successful.", "redirect": safe_next_url(next_url, "user_dashboard")})
 
 
 @app.route("/api/auth/mobile/login-otp", methods=["POST"])
@@ -1539,7 +1536,7 @@ def mobile_login_with_otp():
     session["user_email"] = user["email"]
     session["account_role"] = "customer"
     clear_otp_session()
-    return jsonify({"ok": True, "message": "OTP login successful.", "redirect": safe_next_url(next_url, "customer_dashboard")})
+    return jsonify({"ok": True, "message": "OTP login successful.", "redirect": safe_next_url(next_url, "user_dashboard")})
 
 
 @app.route("/api/auth/staff/mobile/login", methods=["POST"])
@@ -1644,8 +1641,8 @@ def admin_onboard_staff():
 
 @app.route("/login", methods=["GET", "POST"])
 def login():
-    if session.get("account_role") == "customer" and session.get("user_id"):
-        return redirect(url_for("customer_dashboard"))
+    if session.get("account_role") in ("customer", "user") and session.get("user_id"):
+        return redirect(url_for("user_dashboard"))
     if session.get("account_role") == "manager" and session.get("staff_id"):
         return redirect(url_for("manager_dashboard"))
     if session.get("account_role") == "admin" and session.get("staff_id"):
@@ -1669,7 +1666,7 @@ def login():
             session["user_email"] = user["email"]
             session["account_role"] = "customer"
             flash(f"Welcome, {user['name']}!", "success")
-            return redirect(safe_next_url(next_url, "customer_dashboard"))
+            return redirect(safe_next_url(next_url, "user_dashboard"))
 
         flash("Invalid email or password.", "danger")
         return redirect(url_for("login"))
@@ -1759,6 +1756,17 @@ def customer_dashboard():
         order_summary=order_summary,
         realtime_token=realtime_token,
     )
+
+
+@app.route("/user/dashboard")
+@user_required
+def user_dashboard():
+    return customer_dashboard()
+
+
+@app.route("/user")
+def user_home_redirect():
+    return redirect(url_for("user_dashboard"))
 
 
 @app.route("/logout")
@@ -3011,6 +3019,12 @@ def live_customer_dashboard():
             ],
         }
     )
+
+
+@app.route("/api/live/user/dashboard")
+@user_required
+def live_user_dashboard():
+    return live_customer_dashboard()
 
 
 @app.route("/api/live/manager/dashboard")
