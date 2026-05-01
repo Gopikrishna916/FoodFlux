@@ -39,11 +39,22 @@ CACHE_LOCK = threading.Lock()
 APP_CACHE = {}
 CACHE_TTL_SECONDS = int(os.environ.get("CACHE_TTL_SECONDS", "15"))
 
-ADMIN_EMAIL = os.environ.get("ADMIN_EMAIL", "admin@ckfood.com")
-ADMIN_PASSWORD = os.environ.get("ADMIN_PASSWORD", "admin123")
+# Admin authentication via environment variables - NEVER hardcode credentials
+ADMIN_MOBILE = os.environ.get("ADMIN_MOBILE")
+ADMIN_PASSWORD = os.environ.get("ADMIN_PASSWORD")
+
+# Validation: ensure both are provided in production
+if not ADMIN_MOBILE or not ADMIN_PASSWORD:
+    import warnings
+    warnings.warn(
+        "⚠️ SECURITY WARNING: ADMIN_MOBILE and ADMIN_PASSWORD environment variables are not set. "
+        "Admin account will not be created. Set these variables before deploying to production.",
+        RuntimeWarning
+    )
+
 MANAGER_MOBILE = os.environ.get("MANAGER_MOBILE", "9000000001")
 
-MANAGER_EMAIL = os.environ.get("MANAGER_EMAIL", ADMIN_EMAIL)
+MANAGER_EMAIL = os.environ.get("MANAGER_EMAIL", "manager@foodflux.local")
 MANAGER_PASSWORD = os.environ.get("MANAGER_PASSWORD", ADMIN_PASSWORD)
 
 DELIVERY_STAFF = [
@@ -384,18 +395,24 @@ def ensure_performance_indexes(db):
 def seed_staff_users(db):
     manager_password_hash = generate_password_hash(MANAGER_PASSWORD)
     admin_password_hash = generate_password_hash(ADMIN_PASSWORD)
+    
+    # Normalize mobile numbers
+    admin_mobile = normalize_mobile(ADMIN_MOBILE) or ADMIN_MOBILE
     manager_mobile = normalize_mobile(MANAGER_MOBILE) or MANAGER_MOBILE
+    
     existing_staff_rows = db.execute("SELECT email, mobile_number FROM staff_users").fetchall()
     existing_emails = {row["email"].lower() for row in existing_staff_rows}
     existing_mobiles = {normalize_mobile(row["mobile_number"]) for row in existing_staff_rows if row["mobile_number"]}
     existing_mobiles.discard(None)
 
-    if ADMIN_EMAIL.lower() not in existing_emails:
+    # Create admin account with mobile number if not exists
+    if admin_mobile not in existing_mobiles:
+        admin_email = f"staff_{admin_mobile}@foodflux.local"
         db.execute(
             "INSERT INTO staff_users (name, email, mobile_number, mobile_verified, password, role) VALUES (?, ?, ?, 1, ?, ?)",
-            ("FoodFlux Admin", ADMIN_EMAIL, None, admin_password_hash, "admin"),
+            ("FoodFlux Admin", admin_email, admin_mobile, admin_password_hash, "admin"),
         )
-        existing_emails.add(ADMIN_EMAIL.lower())
+        existing_mobiles.add(admin_mobile)
 
     if MANAGER_EMAIL.lower() not in existing_emails:
         db.execute(
@@ -1154,22 +1171,24 @@ def admin_login():
         return redirect(url_for("admin_dashboard"))
 
     if request.method == "POST":
-        email = (request.form.get("email") or "").strip().lower()
+        mobile_number = normalize_mobile(request.form.get("mobile_number") or "")
         password = request.form.get("password") or ""
 
-        if not email or not password:
-            flash("Email and password are required.", "danger")
+        if not mobile_number or not password:
+            flash("Mobile number and password are required.", "danger")
             return redirect(url_for("admin_login"))
 
+        # Authenticate admin using mobile number + password
         staff = query_db(
-            "SELECT id, name, email, role, password FROM staff_users WHERE LOWER(email) = ? AND role = 'admin' AND is_active = 1",
-            (email,),
+            "SELECT id, name, email, role, password, mobile_number FROM staff_users WHERE mobile_number = ? AND role = 'admin' AND is_active = 1",
+            (mobile_number,),
             one=True,
         )
         if staff and check_password_hash(staff["password"], password):
             session["staff_id"] = staff["id"]
             session["staff_name"] = staff["name"]
             session["staff_email"] = staff["email"]
+            session["staff_mobile"] = staff["mobile_number"]
             session["staff_role"] = staff["role"]
             session["account_role"] = "admin"
             flash(f"Welcome, {staff['name']}!", "success")

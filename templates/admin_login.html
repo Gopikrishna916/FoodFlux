@@ -14,11 +14,12 @@
 
                 <form method="post" class="js-login-form" novalidate>
                     <div class="mb-3">
-                        <label class="form-label">Admin Email</label>
+                        <label class="form-label">Admin Mobile Number</label>
                         <div class="input-group auth-input-group">
-                            <span class="input-group-text"><i class="bi bi-envelope"></i></span>
-                            <input type="email" name="email" class="form-control" placeholder="admin@example.com" autocomplete="email" required />
+                            <span class="input-group-text"><i class="bi bi-telephone"></i></span>
+                            <input type="tel" name="mobile_number" class="form-control" placeholder="10-digit mobile number" inputmode="numeric" pattern="[0-9]{10}" maxlength="10" autocomplete="tel" required />
                         </div>
+                        <small class="text-muted d-block mt-1">Enter your 10-digit mobile number</small>
                     </div>
 
                     <div class="mb-2">
