@@ -24,42 +24,6 @@
             </div>
         </div>
 
-        <div class="card shadow-sm mt-4">
-            <div class="card-body">
-                <div class="d-flex justify-content-between align-items-center mb-3 flex-wrap gap-2">
-                    <div>
-                        <h3 class="h5 mb-1">Mobile OTP Signup</h3>
-                        <p class="text-muted mb-0">Fast registration for mobile-first users.</p>
-                    </div>
-                    <span class="badge bg-primary-subtle text-primary">6-digit OTP</span>
-                </div>
-
-                <form id="customerMobileRegisterForm" class="js-mobile-auth-form" data-purpose="register">
-                    <input type="hidden" name="purpose" value="register" />
-                    <div class="mb-3">
-                        <label class="form-label">Full Name</label>
-                        <input type="text" name="full_name" class="form-control" placeholder="Enter your name" required />
-                    </div>
-                    <div class="mb-3">
-                        <label class="form-label">Mobile Number</label>
-                        <div class="input-group">
-                            <span class="input-group-text">+91</span>
-                            <input type="tel" name="mobile_number" class="form-control" placeholder="10-digit mobile number" maxlength="10" required />
-                            <button type="button" class="btn btn-outline-primary js-request-otp">Send OTP</button>
-                        </div>
-                    </div>
-                    <div class="mb-3">
-                        <label class="form-label">OTP</label>
-                        <input type="text" name="otp_code" class="form-control" placeholder="Enter 6-digit OTP" maxlength="6" inputmode="numeric" />
-                    </div>
-                    <div class="mb-3">
-                        <label class="form-label">Password</label>
-                        <input type="password" name="password" class="form-control" placeholder="Choose a password" required />
-                    </div>
-                    <button type="submit" class="btn btn-dark w-100">Verify and Create Account</button>
-                </form>
-            </div>
-        </div>
     </div>
 </div>
 {% endblock %}

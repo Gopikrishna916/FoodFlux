@@ -44,7 +44,7 @@
         <div class="d-flex justify-content-between align-items-center mb-3 flex-wrap gap-2">
             <div>
                 <h3 class="h5 mb-1">Create Restaurant or Delivery Partner</h3>
-                <p class="text-muted mb-0">Verify a mobile number with OTP, then set the account password.</p>
+                <p class="text-muted mb-0">Create the account with a staff mobile number and password.</p>
             </div>
             <span class="badge bg-warning-subtle text-warning">Admin only</span>
         </div>
@@ -64,17 +64,12 @@
                         <option value="delivery_partner">Delivery Partner</option>
                     </select>
                 </div>
-                <div class="col-md-3">
+                <div class="col-md-4">
                     <label class="form-label">Mobile Number</label>
                     <div class="input-group">
                         <span class="input-group-text">+91</span>
                         <input type="tel" name="mobile_number" class="form-control" placeholder="10-digit mobile" maxlength="10" required />
-                        <button type="button" class="btn btn-outline-primary js-request-otp">Send OTP</button>
                     </div>
-                </div>
-                <div class="col-md-2">
-                    <label class="form-label">OTP</label>
-                    <input type="text" name="otp_code" class="form-control" placeholder="OTP" maxlength="6" inputmode="numeric" />
                 </div>
                 <div class="col-md-4">
                     <label class="form-label">Password</label>

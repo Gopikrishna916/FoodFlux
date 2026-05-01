@@ -6,9 +6,6 @@ import base64
 import mimetypes
 import json
 import threading
-import random
-from urllib import parse, request as urlrequest
-from urllib.error import URLError, HTTPError
 from io import BytesIO
 from datetime import datetime, timedelta
 from flask import Flask, render_template, request, redirect, url_for, flash, session, g, jsonify
@@ -48,12 +45,6 @@ MANAGER_MOBILE = os.environ.get("MANAGER_MOBILE", "9000000001")
 
 MANAGER_EMAIL = os.environ.get("MANAGER_EMAIL", ADMIN_EMAIL)
 MANAGER_PASSWORD = os.environ.get("MANAGER_PASSWORD", ADMIN_PASSWORD)
-OTP_REQUEST_COOLDOWN_SECONDS = 30
-OTP_MAX_REQUESTS = 5
-OTP_REQUEST_WINDOW_MINUTES = 15
-OTP_MAX_VERIFY_ATTEMPTS = 5
-OTP_SMS_PROVIDER = os.environ.get("OTP_SMS_PROVIDER", "mock").strip().lower()
-USE_REAL_SMS = os.environ.get("USE_REAL_SMS", "false").strip().lower() in {"1", "true", "yes", "on"}
 
 DELIVERY_STAFF = [
     ("Rahul Sharma", "rahul@ckfood.com", "delivery123", "9000000002"),
@@ -292,19 +283,6 @@ def init_db():
     )
     db.execute(
         '''
-        CREATE TABLE IF NOT EXISTS otp_codes(
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            recipient TEXT NOT NULL,
-            otp_code TEXT NOT NULL,
-            purpose TEXT NOT NULL,
-            expires_at TEXT NOT NULL,
-            used INTEGER NOT NULL DEFAULT 0,
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-        )
-        '''
-    )
-    db.execute(
-        '''
         CREATE TABLE IF NOT EXISTS notifications(
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             target_type TEXT NOT NULL,
@@ -386,8 +364,6 @@ def ensure_performance_indexes(db):
         "CREATE UNIQUE INDEX IF NOT EXISTS idx_users_mobile_unique ON users(mobile_number) WHERE mobile_number IS NOT NULL",
         "CREATE INDEX IF NOT EXISTS idx_staff_users_lower_email_role_active ON staff_users(LOWER(email), role, is_active)",
         "CREATE UNIQUE INDEX IF NOT EXISTS idx_staff_users_mobile_unique ON staff_users(mobile_number) WHERE mobile_number IS NOT NULL",
-        "CREATE INDEX IF NOT EXISTS idx_otp_recipient_purpose_active ON otp_codes(recipient, purpose, used)",
-        "CREATE INDEX IF NOT EXISTS idx_otp_expires_at ON otp_codes(expires_at)",
         "CREATE INDEX IF NOT EXISTS idx_orders_user_created_at ON orders(user_id, created_at DESC)",
         "CREATE INDEX IF NOT EXISTS idx_orders_status ON orders(status)",
         "CREATE INDEX IF NOT EXISTS idx_orders_delivery_status ON orders(delivery_person, status)",
@@ -677,98 +653,6 @@ def log_order_timeline(order_id, status, actor_type="system", actor_name=None, n
     db.commit()
 
 
-def send_sms_via_twilio(mobile_number, otp_code):
-    account_sid = os.environ.get("TWILIO_ACCOUNT_SID", "")
-    auth_token = os.environ.get("TWILIO_AUTH_TOKEN", "")
-    from_number = os.environ.get("TWILIO_FROM_NUMBER", "")
-    if not account_sid or not auth_token or not from_number:
-        return False, "Twilio credentials are not configured."
-
-    endpoint = f"https://api.twilio.com/2010-04-01/Accounts/{account_sid}/Messages.json"
-    body = parse.urlencode(
-        {
-            "From": from_number,
-            "To": f"+91{mobile_number}",
-            "Body": f"Your FoodFlux OTP is {otp_code}. It expires in 5 minutes.",
-        }
-    ).encode("utf-8")
-    req = urlrequest.Request(endpoint, data=body, method="POST")
-    auth = base64.b64encode(f"{account_sid}:{auth_token}".encode("utf-8")).decode("utf-8")
-    req.add_header("Authorization", f"Basic {auth}")
-    req.add_header("Content-Type", "application/x-www-form-urlencoded")
-    try:
-        with urlrequest.urlopen(req, timeout=10):
-            return True, None
-    except (HTTPError, URLError) as exc:
-        return False, str(exc)
-
-
-def send_sms_via_fast2sms(mobile_number, otp_code):
-    api_key = os.environ.get("FAST2SMS_API_KEY", "")
-    if not api_key:
-        return False, "Fast2SMS API key is not configured."
-    payload = {
-        "route": "q",
-        "message": f"FoodFlux OTP: {otp_code}. Valid for 5 minutes.",
-        "language": "english",
-        "numbers": mobile_number,
-    }
-    body = json.dumps(payload).encode("utf-8")
-    req = urlrequest.Request("https://www.fast2sms.com/dev/bulkV2", data=body, method="POST")
-    req.add_header("authorization", api_key)
-    req.add_header("Content-Type", "application/json")
-    try:
-        with urlrequest.urlopen(req, timeout=10):
-            return True, None
-    except (HTTPError, URLError) as exc:
-        return False, str(exc)
-
-
-def send_sms_via_msg91(mobile_number, otp_code):
-    auth_key = os.environ.get("MSG91_AUTH_KEY", "")
-    sender = os.environ.get("MSG91_SENDER", "FOODFX")
-    template_id = os.environ.get("MSG91_TEMPLATE_ID", "")
-    if not auth_key or not template_id:
-        return False, "MSG91 credentials are not configured."
-    endpoint = "https://control.msg91.com/api/v5/flow/"
-    payload = {
-        "template_id": template_id,
-        "short_url": "0",
-        "recipients": [
-            {
-                "mobiles": f"91{mobile_number}",
-                "OTP": otp_code,
-                "sender": sender,
-            }
-        ],
-    }
-    body = json.dumps(payload).encode("utf-8")
-    req = urlrequest.Request(endpoint, data=body, method="POST")
-    req.add_header("authkey", auth_key)
-    req.add_header("Content-Type", "application/json")
-    try:
-        with urlrequest.urlopen(req, timeout=10):
-            return True, None
-    except (HTTPError, URLError) as exc:
-        return False, str(exc)
-
-
-def send_otp_sms(mobile_number, otp_code):
-    if not USE_REAL_SMS:
-        print(f"[OTP-MOCK] OTP for {mobile_number}: {otp_code}")
-        return True, None
-
-    provider = OTP_SMS_PROVIDER
-    if provider == "twilio":
-        return send_sms_via_twilio(mobile_number, otp_code)
-    if provider == "fast2sms":
-        return send_sms_via_fast2sms(mobile_number, otp_code)
-    if provider == "msg91":
-        return send_sms_via_msg91(mobile_number, otp_code)
-    print(f"[OTP-MOCK] OTP for {mobile_number}: {otp_code}")
-    return True, None
-
-
 def normalize_db_image_paths(db):
     foods = db.execute("SELECT id, image FROM foods").fetchall()
     for food in foods:
@@ -923,201 +807,12 @@ def normalize_mobile(mobile_number):
     return None
 
 
-def generate_otp_code():
-    return f"{random.randint(0, 999999):06d}"
-
-
-def create_otp_challenge(recipient, purpose, ttl_minutes=5):
-    otp_code = generate_otp_code()
-    expires_at = (datetime.now() + timedelta(minutes=ttl_minutes)).strftime("%Y-%m-%d %H:%M:%S")
-    db = get_db()
-    db.execute(
-        '''
-        UPDATE otp_codes
-        SET used = 1
-        WHERE recipient = ? AND purpose = ? AND used = 0
-        ''',
-        (recipient, purpose),
-    )
-    db.execute(
-        '''
-        INSERT INTO otp_codes (recipient, otp_code, purpose, expires_at, used)
-        VALUES (?, ?, ?, ?, 0)
-        ''',
-        (recipient, generate_password_hash(otp_code), purpose, expires_at),
-    )
-    db.commit()
-    reset_otp_attempts(recipient, purpose)
-    return otp_code, expires_at
-
-
-def verify_otp_challenge(recipient, purpose, otp_code):
-    attempt_count = increment_otp_attempt(recipient, purpose)
-    if attempt_count > OTP_MAX_VERIFY_ATTEMPTS:
-        db = get_db()
-        db.execute(
-            '''
-            UPDATE otp_codes
-            SET used = 1
-            WHERE recipient = ? AND purpose = ? AND used = 0
-            ''',
-            (recipient, purpose),
-        )
-        db.commit()
-        reset_otp_attempts(recipient, purpose)
-        return False, "Too many OTP attempts. Please request a new code."
-
-    otp_row = query_db(
-        '''
-        SELECT id, otp_code, expires_at, used
-        FROM otp_codes
-        WHERE recipient = ? AND purpose = ?
-        ORDER BY id DESC
-        LIMIT 1
-        ''',
-        (recipient, purpose),
-        one=True,
-    )
-    if not otp_row or otp_row["used"]:
-        return False, "No active OTP challenge found."
-
-    now = datetime.now()
-    expires_at = datetime.strptime(otp_row["expires_at"], "%Y-%m-%d %H:%M:%S")
-    if now > expires_at:
-        db = get_db()
-        db.execute("UPDATE otp_codes SET used = 1 WHERE id = ?", (otp_row["id"],))
-        db.commit()
-        return False, "OTP expired. Please request a new code."
-
-    if not check_password_hash(otp_row["otp_code"], otp_code):
-        return False, "Invalid OTP code."
-
-    db = get_db()
-    db.execute("UPDATE otp_codes SET used = 1 WHERE id = ?", (otp_row["id"],))
-    db.commit()
-    reset_otp_attempts(recipient, purpose)
-    return True, "OTP verified successfully."
-
-
-def get_verified_mobile_for_purpose(purpose, max_age_minutes=10):
-    verified_mobile = session.get("otp_verified_mobile")
-    verified_purpose = session.get("otp_verified_purpose")
-    verified_at = session.get("otp_verified_at")
-
-    if not verified_mobile or verified_purpose != purpose or not verified_at:
-        return None, "OTP verification is required for this action."
-
-    try:
-        verified_time = datetime.strptime(verified_at, "%Y-%m-%d %H:%M:%S")
-    except ValueError:
-        return None, "OTP verification session is invalid."
-
-    if datetime.now() > (verified_time + timedelta(minutes=max_age_minutes)):
-        return None, "OTP verification expired. Please verify again."
-
-    return verified_mobile, None
-
-
-def clear_otp_session():
-    session.pop("otp_challenge_mobile", None)
-    session.pop("otp_challenge_purpose", None)
-    session.pop("otp_challenge_role", None)
-    session.pop("otp_verified_mobile", None)
-    session.pop("otp_verified_purpose", None)
-    session.pop("otp_verified_role", None)
-    session.pop("otp_verified_at", None)
-    session.pop("otp_rate_state", None)
-    session.pop("otp_verify_attempts", None)
-
-
 def generate_mobile_shadow_email(mobile_number):
     base_email = f"mobile_{mobile_number}@foodflux.local"
     existing = query_db("SELECT id FROM users WHERE LOWER(email) = ?", (base_email.lower(),), one=True)
     if not existing:
         return base_email
     return f"mobile_{mobile_number}_{int(datetime.now().timestamp())}@foodflux.local"
-
-
-def otp_state_key(recipient, purpose):
-    return f"{purpose}:{recipient}"
-
-
-def get_otp_rate_state():
-    state = session.get("otp_rate_state", {})
-    return state if isinstance(state, dict) else {}
-
-
-def set_otp_rate_state(state):
-    session["otp_rate_state"] = state
-    session.modified = True
-
-
-def can_request_otp(recipient, purpose):
-    state = get_otp_rate_state()
-    key = otp_state_key(recipient, purpose)
-    record = state.get(key, {})
-    now = datetime.now()
-
-    last_requested_at = record.get("last_requested_at")
-    if last_requested_at:
-        try:
-            last_requested = datetime.strptime(last_requested_at, "%Y-%m-%d %H:%M:%S")
-            if (now - last_requested).total_seconds() < OTP_REQUEST_COOLDOWN_SECONDS:
-                remaining = OTP_REQUEST_COOLDOWN_SECONDS - int((now - last_requested).total_seconds())
-                return False, f"Please wait {max(1, remaining)} seconds before requesting another OTP."
-        except ValueError:
-            pass
-
-    window_started_at = record.get("window_started_at")
-    request_count = int(record.get("request_count", 0))
-    if window_started_at:
-        try:
-            window_started = datetime.strptime(window_started_at, "%Y-%m-%d %H:%M:%S")
-            if now - window_started > timedelta(minutes=OTP_REQUEST_WINDOW_MINUTES):
-                request_count = 0
-                window_started = now
-            if request_count >= OTP_MAX_REQUESTS:
-                return False, "OTP request limit reached. Please try again later."
-        except ValueError:
-            window_started = now
-            request_count = 0
-    else:
-        window_started = now
-
-    record["last_requested_at"] = now.strftime("%Y-%m-%d %H:%M:%S")
-    record["window_started_at"] = window_started.strftime("%Y-%m-%d %H:%M:%S")
-    record["request_count"] = request_count + 1
-    state[key] = record
-    set_otp_rate_state(state)
-    return True, None
-
-
-def reset_otp_attempts(recipient, purpose):
-    attempts = session.get("otp_verify_attempts", {})
-    if not isinstance(attempts, dict):
-        attempts = {}
-    attempts.pop(otp_state_key(recipient, purpose), None)
-    session["otp_verify_attempts"] = attempts
-    session.modified = True
-
-
-def increment_otp_attempt(recipient, purpose):
-    attempts = session.get("otp_verify_attempts", {})
-    if not isinstance(attempts, dict):
-        attempts = {}
-    key = otp_state_key(recipient, purpose)
-    record = attempts.get(key, {"count": 0})
-    record["count"] = int(record.get("count", 0)) + 1
-    attempts[key] = record
-    session["otp_verify_attempts"] = attempts
-    session.modified = True
-    return record["count"]
-
-
-def clear_otp_rate_state(recipient, purpose):
-    state = get_otp_rate_state()
-    state.pop(otp_state_key(recipient, purpose), None)
-    set_otp_rate_state(state)
 
 
 def staff_role_is_valid(role):
@@ -1333,158 +1028,6 @@ def register():
     return render_template("register.html")
 
 
-@app.route("/api/auth/otp/request", methods=["POST"])
-def request_otp():
-    payload = request.get_json(silent=True) or request.form
-    purpose = (payload.get("purpose") or "login").strip().lower()
-    mobile_number = normalize_mobile(payload.get("mobile_number"))
-    role = (payload.get("role") or "").strip().lower()
-
-    if purpose not in ("register", "login", "staff_login", "staff_onboard"):
-        return jsonify({"ok": False, "error": "Invalid OTP purpose."}), 400
-    if not mobile_number:
-        return jsonify({"ok": False, "error": "Enter a valid 10-digit mobile number."}), 400
-
-    allowed, cooldown_error = can_request_otp(mobile_number, purpose)
-    if not allowed:
-        return jsonify({"ok": False, "error": cooldown_error}), 429
-
-    if purpose == "register":
-        existing_user = query_db(
-            "SELECT id FROM users WHERE mobile_number = ?",
-            (mobile_number,),
-            one=True,
-        )
-        if existing_user:
-            return jsonify({"ok": False, "error": "Mobile number already registered."}), 409
-    elif purpose == "login":
-        existing_user = query_db(
-            "SELECT id FROM users WHERE mobile_number = ?",
-            (mobile_number,),
-            one=True,
-        )
-        if not existing_user:
-            return jsonify({"ok": False, "error": "Mobile number is not registered."}), 404
-    elif purpose == "staff_login":
-        if not staff_role_is_valid(role):
-            return jsonify({"ok": False, "error": "Select a valid staff role."}), 400
-        existing_staff = query_db(
-            "SELECT id FROM staff_users WHERE mobile_number = ? AND role = ? AND is_active = 1",
-            (mobile_number, role),
-            one=True,
-        )
-        if not existing_staff:
-            return jsonify({"ok": False, "error": "Staff mobile number is not registered."}), 404
-    elif purpose == "staff_onboard":
-        if not staff_role_is_valid(role):
-            return jsonify({"ok": False, "error": "Select a valid staff role."}), 400
-        existing_staff = query_db(
-            "SELECT id FROM staff_users WHERE mobile_number = ?",
-            (mobile_number,),
-            one=True,
-        )
-        existing_customer = query_db(
-            "SELECT id FROM users WHERE mobile_number = ?",
-            (mobile_number,),
-            one=True,
-        )
-        if existing_staff or existing_customer:
-            return jsonify({"ok": False, "error": "Mobile number is already in use."}), 409
-
-    otp_code, expires_at = create_otp_challenge(mobile_number, purpose)
-    sms_sent, sms_error = send_otp_sms(mobile_number, otp_code)
-    if not sms_sent and USE_REAL_SMS:
-        return jsonify({"ok": False, "error": f"Failed to send OTP SMS. {sms_error or ''}".strip()}), 502
-
-    session["otp_challenge_mobile"] = mobile_number
-    session["otp_challenge_purpose"] = purpose
-    if role:
-        session["otp_challenge_role"] = role
-
-    response_payload = {
-        "ok": True,
-        "message": "OTP generated successfully.",
-        "expires_at": expires_at,
-        "resend_after_seconds": OTP_REQUEST_COOLDOWN_SECONDS,
-    }
-    if not USE_REAL_SMS:
-        response_payload["dev_otp"] = otp_code
-    return jsonify(response_payload)
-
-
-@app.route("/api/auth/otp/verify", methods=["POST"])
-def verify_otp():
-    payload = request.get_json(silent=True) or request.form
-    purpose = (payload.get("purpose") or "login").strip().lower()
-    mobile_number = normalize_mobile(payload.get("mobile_number"))
-    otp_code = (payload.get("otp_code") or "").strip()
-    role = (payload.get("role") or "").strip().lower()
-
-    if purpose not in ("register", "login", "staff_login", "staff_onboard"):
-        return jsonify({"ok": False, "error": "Invalid OTP purpose."}), 400
-    if not mobile_number:
-        return jsonify({"ok": False, "error": "Enter a valid 10-digit mobile number."}), 400
-    if not re.match(r"^[0-9]{6}$", otp_code):
-        return jsonify({"ok": False, "error": "OTP must be a 6-digit code."}), 400
-
-    if purpose in ("staff_login", "staff_onboard") and not staff_role_is_valid(role):
-        return jsonify({"ok": False, "error": "Select a valid staff role."}), 400
-
-    challenge_mobile = session.get("otp_challenge_mobile")
-    challenge_purpose = session.get("otp_challenge_purpose")
-    challenge_role = session.get("otp_challenge_role")
-    if challenge_mobile != mobile_number or challenge_purpose != purpose:
-        return jsonify({"ok": False, "error": "OTP challenge mismatch. Please request a new OTP."}), 409
-    if challenge_role and role and challenge_role != role:
-        return jsonify({"ok": False, "error": "OTP challenge mismatch. Please request a new OTP."}), 409
-
-    verified, message = verify_otp_challenge(mobile_number, purpose, otp_code)
-    if not verified:
-        return jsonify({"ok": False, "error": message}), 400
-
-    session["otp_verified_mobile"] = mobile_number
-    session["otp_verified_purpose"] = purpose
-    if role:
-        session["otp_verified_role"] = role
-    session["otp_verified_at"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    return jsonify({"ok": True, "message": message})
-
-
-@app.route("/api/auth/mobile/register", methods=["POST"])
-def mobile_register():
-    payload = request.get_json(silent=True) or request.form
-    full_name = (payload.get("full_name") or payload.get("name") or "").strip()
-    password = (payload.get("password") or "").strip()
-    requested_mobile = normalize_mobile(payload.get("mobile_number"))
-
-    verified_mobile, otp_error = get_verified_mobile_for_purpose("register")
-    if otp_error:
-        return jsonify({"ok": False, "error": otp_error}), 409
-
-    if requested_mobile and requested_mobile != verified_mobile:
-        return jsonify({"ok": False, "error": "Verified OTP mobile does not match request mobile."}), 409
-
-    if not full_name or len(full_name) < 2:
-        return jsonify({"ok": False, "error": "Full name is required."}), 400
-    if len(password) < 6:
-        return jsonify({"ok": False, "error": "Password must be at least 6 characters."}), 400
-
-    existing_user = query_db("SELECT id FROM users WHERE mobile_number = ?", (verified_mobile,), one=True)
-    existing_staff = query_db("SELECT id FROM staff_users WHERE mobile_number = ?", (verified_mobile,), one=True)
-    if existing_user or existing_staff:
-        return jsonify({"ok": False, "error": "Mobile number already in use."}), 409
-
-    email = generate_mobile_shadow_email(verified_mobile)
-    db = get_db()
-    db.execute(
-        "INSERT INTO users (name, email, mobile_number, mobile_verified, password) VALUES (?, ?, ?, 1, ?)",
-        (full_name, email.lower(), verified_mobile, generate_password_hash(password)),
-    )
-    db.commit()
-    clear_otp_session()
-    return jsonify({"ok": True, "message": "Mobile registration successful."})
-
-
 @app.route("/api/auth/mobile/login", methods=["POST"])
 def mobile_login():
     payload = request.get_json(silent=True) or request.form
@@ -1510,35 +1053,6 @@ def mobile_login():
     return jsonify({"ok": True, "message": "Login successful.", "redirect": safe_next_url(next_url, "user_dashboard")})
 
 
-@app.route("/api/auth/mobile/login-otp", methods=["POST"])
-def mobile_login_with_otp():
-    payload = request.get_json(silent=True) or request.form
-    requested_mobile = normalize_mobile(payload.get("mobile_number"))
-    next_url = payload.get("next")
-
-    verified_mobile, otp_error = get_verified_mobile_for_purpose("login")
-    if otp_error:
-        return jsonify({"ok": False, "error": otp_error}), 409
-
-    if requested_mobile and requested_mobile != verified_mobile:
-        return jsonify({"ok": False, "error": "Verified OTP mobile does not match request mobile."}), 409
-
-    user = query_db(
-        "SELECT id, name, email, mobile_number FROM users WHERE mobile_number = ?",
-        (verified_mobile,),
-        one=True,
-    )
-    if not user:
-        return jsonify({"ok": False, "error": "Mobile number is not registered."}), 404
-
-    session["user_id"] = user["id"]
-    session["user_name"] = user["name"]
-    session["user_email"] = user["email"]
-    session["account_role"] = "customer"
-    clear_otp_session()
-    return jsonify({"ok": True, "message": "OTP login successful.", "redirect": safe_next_url(next_url, "user_dashboard")})
-
-
 @app.route("/api/auth/staff/mobile/login", methods=["POST"])
 def staff_mobile_login():
     payload = request.get_json(silent=True) or request.form
@@ -1561,65 +1075,26 @@ def staff_mobile_login():
     })
 
 
-@app.route("/api/auth/staff/mobile/login-otp", methods=["POST"])
-def staff_mobile_login_with_otp():
-    payload = request.get_json(silent=True) or request.form
-    requested_mobile = normalize_mobile(payload.get("mobile_number"))
-    role = (payload.get("role") or "").strip().lower()
-
-    verified_mobile, otp_error = get_verified_mobile_for_purpose("staff_login")
-    if otp_error:
-        return jsonify({"ok": False, "error": otp_error}), 409
-
-    verified_role = (session.get("otp_verified_role") or "").strip().lower()
-    if role and role != verified_role:
-        return jsonify({"ok": False, "error": "OTP challenge mismatch. Please request a new code."}), 409
-
-    if requested_mobile and requested_mobile != verified_mobile:
-        return jsonify({"ok": False, "error": "Verified OTP mobile does not match request mobile."}), 409
-
-    staff = query_db(
-        "SELECT id, name, email, role, mobile_number FROM staff_users WHERE mobile_number = ? AND role = ? AND is_active = 1",
-        (verified_mobile, verified_role or role),
-        one=True,
-    )
-    if not staff:
-        return jsonify({"ok": False, "error": "Staff account not found."}), 404
-
-    set_staff_session(staff)
-    clear_otp_session()
-    return jsonify({
-        "ok": True,
-        "message": "OTP login successful.",
-        "redirect": url_for("admin_dashboard") if staff["role"] == "admin" else (url_for("manager_dashboard") if staff["role"] == "manager" else url_for("delivery_dashboard")),
-    })
-
-
 @app.route("/api/admin/staff/onboard", methods=["POST"])
 @admin_required
 def admin_onboard_staff():
     payload = request.get_json(silent=True) or request.form
-    name = (payload.get("name") or "").strip()
+    name = (payload.get("name") or payload.get("full_name") or "").strip()
     mobile_number = normalize_mobile(payload.get("mobile_number"))
     password = (payload.get("password") or "").strip()
     role = (payload.get("role") or "").strip().lower()
 
-    verified_mobile, otp_error = get_verified_mobile_for_purpose("staff_onboard")
-    if otp_error:
-        return jsonify({"ok": False, "error": otp_error}), 409
-
-    verified_role = (session.get("otp_verified_role") or "").strip().lower()
-    if not staff_role_is_valid(role) or (verified_role and verified_role != role):
+    if not staff_role_is_valid(role):
         return jsonify({"ok": False, "error": "Select a valid staff role."}), 400
-    if mobile_number and mobile_number != verified_mobile:
-        return jsonify({"ok": False, "error": "Verified OTP mobile does not match request mobile."}), 409
     if not name or len(name) < 2:
         return jsonify({"ok": False, "error": "Staff name is required."}), 400
+    if not mobile_number:
+        return jsonify({"ok": False, "error": "Valid mobile number is required."}), 400
     if len(password) < 6:
         return jsonify({"ok": False, "error": "Password must be at least 6 characters."}), 400
 
-    existing_staff = query_db("SELECT id FROM staff_users WHERE mobile_number = ?", (verified_mobile,), one=True)
-    existing_customer = query_db("SELECT id FROM users WHERE mobile_number = ?", (verified_mobile,), one=True)
+    existing_staff = query_db("SELECT id FROM staff_users WHERE mobile_number = ?", (mobile_number,), one=True)
+    existing_customer = query_db("SELECT id FROM users WHERE mobile_number = ?", (mobile_number,), one=True)
     if existing_staff or existing_customer:
         return jsonify({"ok": False, "error": "Mobile number is already in use."}), 409
 
@@ -1628,14 +1103,13 @@ def admin_onboard_staff():
         "INSERT INTO staff_users (name, email, mobile_number, mobile_verified, password, role, is_active) VALUES (?, ?, ?, 1, ?, ?, 1)",
         (
             name,
-            f"staff_{verified_mobile}@foodflux.local",
-            verified_mobile,
+            f"staff_{mobile_number}@foodflux.local",
+            mobile_number,
             generate_password_hash(password),
             role,
         ),
     )
     db.commit()
-    clear_otp_session()
     return jsonify({"ok": True, "message": "Staff account created successfully."})
 
 
@@ -1781,15 +1255,6 @@ def logout():
         "staff_name",
         "staff_email",
         "staff_role",
-        "otp_challenge_mobile",
-        "otp_challenge_purpose",
-        "otp_challenge_role",
-        "otp_verified_mobile",
-        "otp_verified_purpose",
-        "otp_verified_role",
-        "otp_verified_at",
-        "otp_rate_state",
-        "otp_verify_attempts",
     ]
     for key in session_keys:
         session.pop(key, None)

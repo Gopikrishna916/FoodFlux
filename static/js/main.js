@@ -317,80 +317,25 @@ document.addEventListener("DOMContentLoaded", function () {
         });
     }
 
-    function requestOtpForForm(form, requestButton) {
-        const formData = new FormData(form);
-        const purpose = (formData.get("purpose") || form.getAttribute("data-purpose") || "login").toString();
-        const mobileNumber = (formData.get("mobile_number") || "").toString().trim();
-        const role = (formData.get("role") || form.getAttribute("data-role") || "").toString().trim();
-        const payload = { purpose, mobile_number: mobileNumber };
-
-        if (role) {
-            payload.role = role;
-        }
-
-        if (!mobileNumber) {
-            showLiveToast("OTP request failed", "Enter a valid mobile number.", "alert-danger");
-            return;
-        }
-
-        requestButton.disabled = true;
-        postJson("/api/auth/otp/request", payload)
-            .then((response) => {
-                showLiveToast("OTP sent", response.message || "OTP generated successfully.", "alert-success");
-                if (response.dev_otp) {
-                    showLiveToast("Development OTP", `Use code ${response.dev_otp} while testing locally.`, "alert-info");
-                    window.setTimeout(function () {
-                        const otpField = form.querySelector('input[name="otp_code"]');
-                        if (otpField) {
-                            otpField.value = response.dev_otp;
-                        }
-                    }, 1200);
-                }
-            })
-            .catch(function (error) {
-                showLiveToast("OTP request failed", error.message, "alert-danger");
-            })
-            .finally(function () {
-                window.setTimeout(function () {
-                    requestButton.disabled = false;
-                }, 30000);
-            });
-    }
-
     function submitMobileAuthForm(form) {
         const formData = new FormData(form);
         const purpose = (formData.get("purpose") || form.getAttribute("data-purpose") || "login").toString();
         const mobileNumber = (formData.get("mobile_number") || "").toString().trim();
-        const otpCode = (formData.get("otp_code") || "").toString().trim();
         const role = (formData.get("role") || form.getAttribute("data-role") || "").toString().trim();
         const password = (formData.get("password") || "").toString();
         const fullName = (formData.get("full_name") || formData.get("name") || "").toString().trim();
         const nextUrl = (formData.get("next") || "").toString().trim();
 
-        const sharedPayload = { purpose, mobile_number: mobileNumber };
-        if (role) {
-            sharedPayload.role = role;
+        if (!mobileNumber) {
+            showLiveToast("Missing mobile number", "Enter a valid mobile number.", "alert-danger");
+            return;
         }
-        if (nextUrl) {
-            sharedPayload.next = nextUrl;
-        }
-
-        function verifyOtpIfNeeded() {
-            if (!otpCode) {
-                return Promise.resolve();
-            }
-            return postJson("/api/auth/otp/verify", { ...sharedPayload, otp_code: otpCode });
+        if (!password) {
+            showLiveToast("Missing password", "Enter your password to continue.", "alert-danger");
+            return;
         }
 
         function finalizeRequest() {
-            if (purpose === "register") {
-                return postJson("/api/auth/mobile/register", {
-                    full_name: fullName,
-                    mobile_number: mobileNumber,
-                    password,
-                });
-            }
-
             if (purpose === "staff_onboard") {
                 return postJson("/api/admin/staff/onboard", {
                     name: fullName,
@@ -401,12 +346,6 @@ document.addEventListener("DOMContentLoaded", function () {
             }
 
             if (purpose === "staff_login") {
-                if (otpCode) {
-                    return postJson("/api/auth/staff/mobile/login-otp", {
-                        mobile_number: mobileNumber,
-                        role,
-                    });
-                }
                 return postJson("/api/auth/staff/mobile/login", {
                     mobile_number: mobileNumber,
                     password,
@@ -414,12 +353,6 @@ document.addEventListener("DOMContentLoaded", function () {
                 });
             }
 
-            if (otpCode) {
-                return postJson("/api/auth/mobile/login-otp", {
-                    mobile_number: mobileNumber,
-                    next: nextUrl,
-                });
-            }
             return postJson("/api/auth/mobile/login", {
                 mobile_number: mobileNumber,
                 password,
@@ -427,18 +360,7 @@ document.addEventListener("DOMContentLoaded", function () {
             });
         }
 
-        if (!mobileNumber) {
-            showLiveToast("Missing mobile number", "Enter a valid mobile number.", "alert-danger");
-            return;
-        }
-
-        if (purpose === "staff_onboard" && !otpCode) {
-            showLiveToast("OTP required", "Verify the mobile number before creating the staff account.", "alert-danger");
-            return;
-        }
-
-        verifyOtpIfNeeded()
-            .then(finalizeRequest)
+        finalizeRequest()
             .then((response) => {
                 if (response && response.message) {
                     showLiveToast("Success", response.message, "alert-success");
@@ -464,13 +386,6 @@ document.addEventListener("DOMContentLoaded", function () {
         }
 
         forms.forEach((form) => {
-            const requestButton = form.querySelector(".js-request-otp");
-            if (requestButton) {
-                requestButton.addEventListener("click", function () {
-                    requestOtpForForm(form, requestButton);
-                });
-            }
-
             form.addEventListener("submit", function (event) {
                 event.preventDefault();
                 submitMobileAuthForm(form);

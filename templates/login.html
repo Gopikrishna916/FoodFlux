@@ -56,7 +56,7 @@
                 <div class="d-flex justify-content-between align-items-center mb-3 flex-wrap gap-2">
                     <div>
                         <h3 class="h5 mb-1">Mobile Login</h3>
-                        <p class="text-muted mb-0">Use a password or OTP to sign in quickly.</p>
+                        <p class="text-muted mb-0">Sign in with your mobile number and password.</p>
                     </div>
                     <span class="badge bg-success-subtle text-success">App-like sign in</span>
                 </div>
@@ -69,17 +69,11 @@
                         <div class="input-group auth-input-group">
                             <span class="input-group-text"><i class="bi bi-phone"></i></span>
                             <input type="tel" name="mobile_number" class="form-control" placeholder="10-digit mobile number" maxlength="10" required />
-                            <button type="button" class="btn btn-outline-primary js-request-otp">Send OTP</button>
                         </div>
                     </div>
                     <div class="mb-3">
-                        <label class="form-label">Password or OTP</label>
-                        <input type="password" name="password" class="form-control js-password-input" placeholder="Enter password" autocomplete="current-password" />
-                        <small class="text-muted d-block mt-1">Or enter the OTP below and leave the password blank.</small>
-                    </div>
-                    <div class="mb-3">
-                        <label class="form-label">OTP</label>
-                        <input type="text" name="otp_code" class="form-control" placeholder="6-digit OTP" maxlength="6" inputmode="numeric" />
+                        <label class="form-label">Password</label>
+                        <input type="password" name="password" class="form-control js-password-input" placeholder="Enter password" autocomplete="current-password" required />
                     </div>
                     <button type="submit" class="btn btn-dark w-100">Login with Mobile</button>
                 </form>
