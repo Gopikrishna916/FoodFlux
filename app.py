@@ -802,9 +802,20 @@ def login_required(func):
 def role_required(*allowed_roles):
     def decorator(func):
         def wrapper(*args, **kwargs):
-            if session.get("account_role") not in allowed_roles:
-                flash("Access required for this dashboard.", "warning")
-                return redirect(url_for("home"))
+            role = session.get("account_role")
+            if role not in allowed_roles:
+                if not role:
+                    flash("Please log in to access that page.", "warning")
+                    return redirect(url_for("login"))
+
+                redirect_map = {
+                    "customer": "user_dashboard",
+                    "admin": "admin_dashboard",
+                    "manager": "manager_dashboard",
+                    "delivery_partner": "delivery_dashboard",
+                }
+                flash("You do not have access to that page.", "warning")
+                return redirect(url_for(redirect_map.get(role, "home")))
             return func(*args, **kwargs)
 
         wrapper.__name__ = func.__name__
@@ -819,6 +830,10 @@ def admin_required(func):
 
 def manager_required(func):
     return role_required("manager")(func)
+
+
+def staff_required(func):
+    return role_required("admin", "manager")(func)
 
 
 def staff_order_required(func):
@@ -1317,7 +1332,34 @@ def user_dashboard():
 
 @app.route("/user")
 def user_home_redirect():
-    return redirect(url_for("user_dashboard"))
+    if session.get("account_role") in ("customer", "user") and session.get("user_id"):
+        return redirect(url_for("user_dashboard"))
+    return redirect(url_for("home"))
+
+
+@app.route("/restaurant")
+def restaurant_route():
+    if session.get("account_role") == "manager" and session.get("staff_id"):
+        return redirect(url_for("manager_dashboard"))
+    return redirect(url_for("manager_login"))
+
+
+@app.route("/restaurant/login", methods=["GET", "POST"])
+def restaurant_login():
+    return manager_login()
+
+
+@app.route("/restaurant/dashboard")
+@manager_required
+def restaurant_dashboard():
+    return manager_dashboard()
+
+
+@app.route("/delivery")
+def delivery_route():
+    if session.get("account_role") == "delivery_partner" and session.get("staff_id"):
+        return redirect(url_for("delivery_dashboard"))
+    return redirect(url_for("delivery_login"))
 
 
 @app.route("/logout")
@@ -2164,7 +2206,7 @@ def admin_orders():
 
 @app.route("/admin/foods", methods=["GET", "POST"])
 @app.route("/manager/foods", methods=["GET", "POST"])
-@admin_required
+@staff_required
 def admin_foods():
     if request.method == "POST":
         name = request.form.get("name")
@@ -2208,7 +2250,7 @@ def admin_foods():
 
 @app.route("/admin/foods/edit/<int:food_id>", methods=["POST"])
 @app.route("/manager/foods/edit/<int:food_id>", methods=["POST"])
-@admin_required
+@staff_required
 def edit_food(food_id):
     name = request.form.get("name")
     category = request.form.get("category")
@@ -2256,7 +2298,7 @@ def edit_food(food_id):
 
 @app.route("/admin/foods/delete/<int:food_id>", methods=["POST"])
 @app.route("/manager/foods/delete/<int:food_id>", methods=["POST"])
-@admin_required
+@staff_required
 def delete_food(food_id):
     db = get_db()
     food = db.execute("SELECT id, image, name FROM foods WHERE id = ?", (food_id,)).fetchone()
