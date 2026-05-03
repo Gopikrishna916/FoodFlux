@@ -13,3 +13,7 @@ services:
         value: mock
       - key: USE_REAL_SMS
         value: false
+      - key: ADMIN_MOBILE
+        value: 7780172877
+      - key: ADMIN_PASSWORD
+        value: Gk@02052004
