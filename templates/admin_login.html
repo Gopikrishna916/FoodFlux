@@ -38,6 +38,12 @@
                         <small class="text-muted">Protected area</small>
                     </div>
 
+                    {% if admin_notice %}
+                    <div class="alert alert-warning py-2 mb-4" role="alert">
+                        {{ admin_notice }}
+                    </div>
+                    {% endif %}
+
                     <button class="btn btn-primary w-100 js-login-submit" type="submit">
                         <span class="js-login-submit-text">Login</span>
                     </button>

@@ -48,9 +48,9 @@ final_total = total - discount_amount
 estimated_delivery = calculate_estimated_delivery()
 
 cursor.execute('''
-    INSERT INTO orders (user_id, total, original_total, discount, discount_percentage, address, phone, payment, status, estimated_delivery_time)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-''', (user_id, final_total, total, discount_amount, discount_percentage,
+    INSERT INTO orders (user_id, customer_name, total, original_total, discount, discount_percentage, address, phone, payment, status, estimated_delivery_time)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+''', (user_id, 'Test Customer', final_total, total, discount_amount, discount_percentage,
       'Test Address', '1234567890', 'UPI', 'Preparing', estimated_delivery.strftime("%Y-%m-%d %H:%M:%S")))
 
 order_id = cursor.lastrowid
@@ -65,13 +65,14 @@ for food in foods:
 conn.commit()
 
 # Verify the order
-cursor.execute('SELECT * FROM orders WHERE id = ?', (order_id,))
+cursor.execute('SELECT id, user_id, customer_name, total, original_total, discount, discount_percentage, address, phone, payment, status, estimated_delivery_time FROM orders WHERE id = ?', (order_id,))
 order = cursor.fetchone()
 print(f"Created order ID: {order[0]}")
-print(f"Original total: ₹{order[3]}")
-print(f"Discount: ₹{order[4]} ({order[5]}%)")
-print(f"Final total: ₹{order[2]}")
-print(f"Status: {order[9]}")
-print(f"Estimated delivery: {order[10]}")
+print(f"Customer: {order[2]}")
+print(f"Original total: ₹{order[4]}")
+print(f"Discount: ₹{order[5]} ({order[6]}%)")
+print(f"Final total: ₹{order[3]}")
+print(f"Status: {order[10]}")
+print(f"Estimated delivery: {order[11]}")
 
 conn.close()

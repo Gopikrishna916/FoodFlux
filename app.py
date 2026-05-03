@@ -16,6 +16,13 @@ try:
 except ImportError:
     qrcode = None
 
+# Load environment variables from .env file
+try:
+    from dotenv import load_dotenv
+    load_dotenv()
+except ImportError:
+    pass  # dotenv not installed, rely on system environment variables
+
 app = Flask(__name__)
 app.secret_key = os.environ.get("SECRET_KEY", "supersecretkey_for_demo_only")
 app.config["SEND_FILE_MAX_AGE_DEFAULT"] = int(os.environ.get("STATIC_CACHE_SECONDS", "86400"))
@@ -42,13 +49,16 @@ CACHE_TTL_SECONDS = int(os.environ.get("CACHE_TTL_SECONDS", "15"))
 # Admin authentication via environment variables - NEVER hardcode credentials
 ADMIN_MOBILE = os.environ.get("ADMIN_MOBILE")
 ADMIN_PASSWORD = os.environ.get("ADMIN_PASSWORD")
+DEFAULT_ADMIN_MOBILE = os.environ.get("DEFAULT_ADMIN_MOBILE", "9000000000")
+DEFAULT_ADMIN_PASSWORD = os.environ.get("DEFAULT_ADMIN_PASSWORD", "admin@123")
 
 # Validation: ensure both are provided in production
 if not ADMIN_MOBILE or not ADMIN_PASSWORD:
     import warnings
     warnings.warn(
         "⚠️ SECURITY WARNING: ADMIN_MOBILE and ADMIN_PASSWORD environment variables are not set. "
-        "Admin account will not be created. Set these variables before deploying to production.",
+        "A development admin account may be created automatically if no admin exists. "
+        "Set these variables before deploying to production.",
         RuntimeWarning
     )
 
@@ -393,19 +403,25 @@ def ensure_performance_indexes(db):
 
 
 def seed_staff_users(db):
-    # Only create admin if credentials are provided
-    if not ADMIN_MOBILE or not ADMIN_PASSWORD:
-        # Skip admin creation if environment variables not set
-        pass
-    else:
-        admin_password_hash = generate_password_hash(ADMIN_PASSWORD)
-        admin_mobile = normalize_mobile(ADMIN_MOBILE) or ADMIN_MOBILE
-        
-        existing_staff_rows = db.execute("SELECT email, mobile_number FROM staff_users").fetchall()
-        existing_mobiles = {normalize_mobile(row["mobile_number"]) for row in existing_staff_rows if row["mobile_number"]}
-        existing_mobiles.discard(None)
+    existing_staff_rows = db.execute("SELECT email, mobile_number, role FROM staff_users").fetchall()
+    existing_mobiles = {normalize_mobile(row["mobile_number"]) for row in existing_staff_rows if row["mobile_number"]}
+    existing_mobiles.discard(None)
+    existing_admin = any(row["role"] == "admin" for row in existing_staff_rows)
 
-        # Create admin account with mobile number if not exists
+    if not existing_admin:
+        if ADMIN_MOBILE and ADMIN_PASSWORD:
+            admin_password_hash = generate_password_hash(ADMIN_PASSWORD)
+            admin_mobile = normalize_mobile(ADMIN_MOBILE) or ADMIN_MOBILE
+        else:
+            admin_password_hash = generate_password_hash(DEFAULT_ADMIN_PASSWORD)
+            admin_mobile = normalize_mobile(DEFAULT_ADMIN_MOBILE) or DEFAULT_ADMIN_MOBILE
+            import warnings
+            warnings.warn(
+                "⚠️ No ADMIN_MOBILE/ADMIN_PASSWORD provided. Creating a development admin account using default credentials. "
+                "Do not use this in production.",
+                RuntimeWarning,
+            )
+
         if admin_mobile not in existing_mobiles:
             admin_email = f"staff_{admin_mobile}@foodflux.local"
             db.execute(
@@ -831,7 +847,29 @@ def normalize_mobile(mobile_number):
     digits = re.sub(r"\D", "", mobile_number or "")
     if len(digits) == 10:
         return digits
+    if len(digits) == 12 and digits.startswith("91"):
+        return digits[-10:]
     return None
+
+
+def lookup_staff_by_email_or_mobile(identifier, role):
+    if not staff_role_is_valid(role):
+        return None
+    identifier = (identifier or "").strip()
+    if not identifier:
+        return None
+    mobile = normalize_mobile(identifier)
+    if mobile:
+        return query_db(
+            "SELECT id, name, email, role, password, mobile_number FROM staff_users WHERE mobile_number = ? AND role = ? AND is_active = 1",
+            (mobile, role),
+            one=True,
+        )
+    return query_db(
+        "SELECT id, name, email, role, password, mobile_number FROM staff_users WHERE LOWER(email) = ? AND role = ? AND is_active = 1",
+        (identifier.lower(), role),
+        one=True,
+    )
 
 
 def generate_mobile_shadow_email(mobile_number):
@@ -1207,7 +1245,10 @@ def admin_login():
         flash("Invalid admin credentials.", "danger")
         return redirect(url_for("admin_login"))
 
-    return render_template("admin_login.html")
+    admin_notice = None
+    if not ADMIN_MOBILE or not ADMIN_PASSWORD:
+        admin_notice = "No admin credentials are configured. For local development, use mobile 9000000000 and password admin@123."
+    return render_template("admin_login.html", admin_notice=admin_notice)
 
 
 @app.route("/customer/dashboard")
@@ -1297,31 +1338,23 @@ def manager_login():
         return redirect(url_for("manager_dashboard"))
 
     if request.method == "POST":
-        email = (request.form.get("email") or "").strip().lower()
+        identifier = (request.form.get("email") or "").strip()
         password = request.form.get("password") or ""
 
-        if not email or not password:
-            flash("Email and password are required.", "danger")
+        if not identifier or not password:
+            flash("Email or mobile plus password are required.", "danger")
             return redirect(url_for("manager_login"))
 
-        staff = query_db(
-            "SELECT id, name, email, role, password FROM staff_users WHERE LOWER(email) = ? AND role = 'manager' AND is_active = 1",
-            (email,),
-            one=True,
-        )
+        staff = lookup_staff_by_email_or_mobile(identifier, "manager")
         if staff and check_password_hash(staff["password"], password):
-            session["staff_id"] = staff["id"]
-            session["staff_name"] = staff["name"]
-            session["staff_email"] = staff["email"]
-            session["staff_role"] = staff["role"]
-            session["account_role"] = "manager"
+            set_staff_session(staff)
             flash(f"Welcome, {staff['name']}!", "success")
             return redirect(url_for("manager_dashboard"))
 
         flash("Invalid manager credentials.", "danger")
         return redirect(url_for("manager_login"))
 
-    return render_template("manager_login.html")
+    return render_template("manager_login.html", manager_hint=f"{MANAGER_EMAIL} / {MANAGER_MOBILE}")
 
 
 @app.route("/manager")
@@ -1335,31 +1368,23 @@ def delivery_login():
         return redirect(url_for("delivery_dashboard"))
 
     if request.method == "POST":
-        email = (request.form.get("email") or "").strip().lower()
+        identifier = (request.form.get("email") or "").strip()
         password = request.form.get("password") or ""
 
-        if not email or not password:
-            flash("Email and password are required.", "danger")
+        if not identifier or not password:
+            flash("Email or mobile plus password are required.", "danger")
             return redirect(url_for("delivery_login"))
 
-        staff = query_db(
-            "SELECT id, name, email, role, password FROM staff_users WHERE LOWER(email) = ? AND role = 'delivery_partner' AND is_active = 1",
-            (email,),
-            one=True,
-        )
+        staff = lookup_staff_by_email_or_mobile(identifier, "delivery_partner")
         if staff and check_password_hash(staff["password"], password):
-            session["staff_id"] = staff["id"]
-            session["staff_name"] = staff["name"]
-            session["staff_email"] = staff["email"]
-            session["staff_role"] = staff["role"]
-            session["account_role"] = "delivery_partner"
+            set_staff_session(staff)
             flash(f"Welcome, {staff['name']}!", "success")
             return redirect(url_for("delivery_dashboard"))
 
         flash("Invalid delivery partner credentials.", "danger")
         return redirect(url_for("delivery_login"))
 
-    return render_template("delivery_login.html")
+    return render_template("delivery_login.html", delivery_hint="Your registered email or mobile number")
 
 
 @app.route("/menu")
