@@ -408,11 +408,20 @@ def seed_staff_users(db):
     existing_mobiles.discard(None)
     existing_admin = any(row["role"] == "admin" for row in existing_staff_rows)
 
-    if not existing_admin:
-        if ADMIN_MOBILE and ADMIN_PASSWORD:
-            admin_password_hash = generate_password_hash(ADMIN_PASSWORD)
-            admin_mobile = normalize_mobile(ADMIN_MOBILE) or ADMIN_MOBILE
+    if ADMIN_MOBILE and ADMIN_PASSWORD:
+        admin_password_hash = generate_password_hash(ADMIN_PASSWORD)
+        admin_mobile = normalize_mobile(ADMIN_MOBILE) or ADMIN_MOBILE
+        if existing_admin:
+            db.execute("UPDATE staff_users SET mobile_number = ?, password = ? WHERE role = 'admin'", (admin_mobile, admin_password_hash))
         else:
+            admin_email = f"staff_{admin_mobile}@foodflux.local"
+            db.execute(
+                "INSERT INTO staff_users (name, email, mobile_number, mobile_verified, password, role) VALUES (?, ?, ?, 1, ?, ?)",
+                ("FoodFlux Admin", admin_email, admin_mobile, admin_password_hash, "admin"),
+            )
+            existing_mobiles.add(admin_mobile)
+    else:
+        if not existing_admin:
             admin_password_hash = generate_password_hash(DEFAULT_ADMIN_PASSWORD)
             admin_mobile = normalize_mobile(DEFAULT_ADMIN_MOBILE) or DEFAULT_ADMIN_MOBILE
             import warnings
@@ -421,8 +430,6 @@ def seed_staff_users(db):
                 "Do not use this in production.",
                 RuntimeWarning,
             )
-
-        if admin_mobile not in existing_mobiles:
             admin_email = f"staff_{admin_mobile}@foodflux.local"
             db.execute(
                 "INSERT INTO staff_users (name, email, mobile_number, mobile_verified, password, role) VALUES (?, ?, ?, 1, ?, ?)",
